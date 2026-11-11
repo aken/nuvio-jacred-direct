@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.8');
+  assert.equal(manifest.version, '0.0.9');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.8$/);
+  assert.match(pkg.version,/^0\.0\.9$/);
 });
 
 
@@ -844,5 +844,78 @@ test('Russian separator and episode-word variants select only the labelled episo
   for (const title of variants) {
     assert.equal((await run([pack([sample(title)])],'42','series',1,3)).found.length,1,title);
     assert.equal((await run([pack([sample(title)]),pack([sample(title)])],'42','series',1,5)).found.length,0,title);
+  }
+});
+
+
+test('episode-number-before-label releases never become unrestricted season packs', async () => {
+  const cases = [
+    ['Show Season 1: 2-4 episodes', [2,3,4], [1,5,10]],
+    ['Show Season 1: 2,4 episodes', [2,4], [1,3,5]],
+    ['Show Season 1: 2,4-6 episodes', [2,4,5,6], [3,7,12]],
+    ['Show 1 \u0441\u0435\u0437\u043e\u043d 2,4 \u0441\u0435\u0440\u0438\u0438', [2,4], [3,5,10]],
+    ['Show S01: 2-4 \u044d\u043f\u0438\u0437\u043e\u0434\u0430', [2,3,4], [1,5,99]],
+    ['Show 1 \u0441\u0435\u0437\u043e\u043d 2-4 \u044d\u043f\u0438\u0437\u043e\u0434\u0430', [2,3,4], [1,5,10]]
+  ];
+  for (const [title, included, excluded] of cases) {
+    for (const episode of included) {
+      const x = await run([pack([sample(title)])], '42', 'series', 1, episode);
+      assert.equal(x.found.length, 1, `${title} must contain E${episode}`);
+      assert.match(x.found[0].title, /Episode selection not verified|rutracker/);
+    }
+    for (const episode of excluded) {
+      const x = await run([pack([sample(title)]),pack([sample(title)])], '42', 'series', 1, episode);
+      assert.equal(x.found.length, 0, `${title} must not contain E${episode}`);
+    }
+  }
+});
+test('reversed ranges with an episode label after the numbers are rejected', async () => {
+  for (const title of ['Show Season 1: 9-3 episodes','Show 1 \u0441\u0435\u0437\u043e\u043d 9-3 \u0441\u0435\u0440\u0438\u0438','Show S01: 9-3 \u044d\u043f\u0438\u0437\u043e\u0434\u0430']) {
+    for (const episode of [3,9]) {
+      const x = await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,episode);
+      assert.equal(x.found.length, 0, `${title} should fail closed`);
+    }
+  }
+});
+test('metadata matching is grounded in the actual release title, not unrelated catalog fields', async () => {
+  const fake = sample('Unrelated Movie (1999) 1080p',HASH_A,10, {info:{name:'The Matrix',originalname:'The Matrix',relased:1999}});
+  const x = await run([movieMeta,pack([fake]),pack([fake])], '603','movie',null,null,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,0);
+});
+test('overlong untrusted release titles cannot hide an episode marker after truncation', async () => {
+  const title = 'Show Season 1 ' + 'A'.repeat(505) + ' E06';
+  const x = await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,99);
+  assert.equal(x.found.length,0);
+});
+test('tracker sanitizer rejects single-label hostnames and malformed IPv4-looking names', async () => {
+  const trackers=['udp://printer:6969/announce','udp://999.999.999.999:6969/announce','udp://tracker.example.org:6969/announce'];
+  const magnet='magnet:?xt=urn:btih:'+HASH_A+trackers.map(x=>'&tr='+encodeURIComponent(x)).join('');
+  const x=await run([pack([sample('Film',HASH_A,10,{MagnetUri:magnet})])]);
+  const out=new URLSearchParams(x.found[0].url.split('?')[1]).getAll('tr');
+  assert.deepEqual(Array.from(out),['udp://tracker.example.org:6969/announce']);
+});
+test('generated single-episode titles never match a different episode or season', async () => {
+  for (let s=0;s<35;s++) for(let e=1;e<=22;e++) {
+    const title=`Series S${String(s).padStart(2,'0')}E${String(e).padStart(2,'0')} 1080p`;
+    const good=await run([pack([sample(title)])], '123','series',s,e);
+    assert.equal(good.found.length,1,title);
+    const other=await run([pack([sample(title)]),pack([sample(title)])], '123','series',(s+1)%35,e);
+    assert.equal(other.found.length,0,title+' wrong season');
+    const wrong=await run([pack([sample(title)]),pack([sample(title)])], '123','series',s,e+1);
+    assert.equal(wrong.found.length,0,title+' wrong episode');
+  }
+});
+
+test('conflicting resolution tokens never claim a verified playback resolution', async () => {
+  const cases = [
+    ['Film 2160p source 1080p encode', 'Unknown'],
+    ['Film 1080p 2160p', 'Unknown'],
+    ['Film 4K 1080p', 'Unknown'],
+    ['Film 4K UHD 2160p', '2160p'],
+    ['Film 1920x1080 4K source', '1080p']
+  ];
+  for (const [title, expected] of cases) {
+    const x = await run([pack([sample(title)])]);
+    assert.equal(x.found[0].quality, expected, title);
   }
 });

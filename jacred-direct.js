@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.8
+/* JacRed Direct for Nuvio - 0.0.9
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -184,7 +184,13 @@
     var portMatch = /:(\d{1,5})$/.exec(authority);
     if (portMatch && (Number(portMatch[1]) < 1 || Number(portMatch[1]) > 65535)) return false;
     var host = authority.toLowerCase().replace(/:\d{1,5}$/, '');
-    if (!host || /[^a-z0-9.\-]/i.test(host)) return false;
+    // Unqualified hostnames may resolve through a LAN search suffix or LLMNR.
+    // Numeric-looking dotted hosts must be valid IPv4 addresses, not DNS aliases.
+    if (!host || host.indexOf('.') === -1 || /[^a-z0-9.\-]/i.test(host)) return false;
+    if (/^\d+(?:\.\d+)+$/.test(host)) {
+      var numericParts = host.split('.');
+      if (numericParts.length !== 4 || numericParts.some(function (part) { return !/^\d{1,3}$/.test(part) || Number(part) > 255; })) return false;
+    }
     if (/^\d+$/.test(host) || /^0x[\da-f]+$/i.test(host) || /\.\.|\.$/.test(host)) return false;
     if (host.split('.').some(function (label) { return /^0x[0-9a-f]+$/i.test(label) || /^0\d+$/.test(label); })) return false;
     if (/(?:^|\.)(?:localdomain|home\.arpa)$/.test(host)) return false;
@@ -253,8 +259,11 @@
       ['720p', /(?:^|[^a-z\d])720(?:p(?:\d{2,3})?(?:fps|hz)?)?(?![a-z\d])/i],
       ['480p', /(?:^|[^a-z\d])480(?:p(?:\d{2,3})?(?:fps|hz)?)?(?![a-z\d])/i]
     ];
-    for (var i = 0; i < labels.length; i++) if (labels[i][1].test(value)) return labels[i][0];
-    return 'Unknown';
+    // An ambiguous release title may describe the source and the actual
+    // encode at different resolutions. Never advertise the higher one as fact.
+    var detected = [];
+    for (var i = 0; i < labels.length; i++) if (labels[i][1].test(value)) detected.push(labels[i][0]);
+    return detected.length === 1 ? detected[0] : 'Unknown';
   }
   function qualityRank(q) { return q === '4320p' ? 6 : q === '2160p' ? 5 : q === '1440p' ? 4 : q === '1080p' ? 3 : q === '720p' ? 2 : q === '480p' ? 1 : 0; }
   function seedCount(row) {
@@ -305,8 +314,9 @@
   }
   function matchesMetadata(row, metadata) {
     if (!metadata || (!metadata.title && !metadata.original)) return true;
-    var release = ' ' + normalizedWords([row.Title, row.info && row.info.name,
-      row.info && row.info.originalname].filter(Boolean).join(' ')) + ' ';
+    // Catalog aliases alone cannot prove that the returned torrent matches.
+    // The release title must contain a known title; metadata fields are hints.
+    var release = ' ' + normalizedWords(row.Title) + ' ';
     return [metadata.title, metadata.original].some(function (alias) {
       var name = normalizedWords(alias);
       return name.length > 1 && release.indexOf(' ' + name + ' ') !== -1;
@@ -382,6 +392,35 @@
         for (var k = 0; k < items.length && markers.length < 50; k++) markers.push(items[k]);
       }
     }
+    // Episode labels AFTER the numbers are common in release names:
+    // "Season 1: 2-4 episodes" or "1 \u0441\u0435\u0437\u043e\u043d 2,4 \u0441\u0435\u0440\u0438\u0438". Without these
+    // patterns, an explicit episode list can be misread as a full-season pack.
+    // Keep parsing bounded and fail closed on reversed or invalid ranges.
+    function appendPostfix(seasonNumber, firstNumber, suffix) {
+      var ss = Number(seasonNumber), first = Number(firstNumber);
+      if (first < 1 || first > 999) { markers.push({ s:ss, a:0, b:0 }); return; }
+      var added = [{ s:ss, a:first, b:first }], last = first, token;
+      var tokenPattern = /([-~,;&+])\s*(?:e(?:p)?)?(\d{1,3})(?!\d)/gi;
+      while ((token = tokenPattern.exec(suffix)) !== null) {
+        var next = Number(token[2]);
+        if (next < 1 || next > 999 ||
+            ((token[1] === '-' || token[1] === '~') && (next < last || next - last >= 100))) {
+          markers.push({ s:ss, a:0, b:0 });
+          return;
+        }
+        if (token[1] === '-' || token[1] === '~') added.push({ s:ss, a:last, b:next });
+        else added.push({ s:ss, a:next, b:next });
+        last = next;
+      }
+      for (var index = 0; index < added.length && markers.length < 50; index++) markers.push(added[index]);
+    }
+    var ending = '(?:episodes?|eps?|\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u0439)|\u044d\u043f\u0438\u0437\u043e\u0434(?:\u0430|\u044b|\u043e\u0432)?)';
+    var postfixTail = '(\\d{1,3})(?!\\d)((?:\\s*[-~,;&+]\\s*(?:e(?:p)?)?\\d{1,3}(?!\\d)){0,10})\\s+' + ending + '(?![a-z\\u0400-\\u052f])';
+    var namedSeasonPostfix = new RegExp('(?:^|[^a-z\\d\\u0400-\\u052f])(?:seasons?|s|\\u0441\\u0435\\u0437\\u043e\\u043d(?:\\u0430)?)\\s*(\\d{1,2})(?!\\d)[\\s,;:.\\-/()]+\\s*' + postfixTail, 'gi');
+    var numberedSeasonPostfix = new RegExp('(?:^|[^\\d])(\\d{1,2})(?!\\d)\\s+(?:season|\\u0441\\u0435\\u0437\\u043e\\u043d(?:\\u0430)?)\\s*[\\s,;:.\\-/()]+\\s*' + postfixTail, 'gi');
+    while ((m = namedSeasonPostfix.exec(t)) !== null && markers.length < 50) appendPostfix(m[1], m[2], m[3]);
+    while ((m = numberedSeasonPostfix.exec(t)) !== null && markers.length < 50) appendPostfix(m[1], m[2], m[3]);
+
     // Russian postfix season with an episode label before its number.
     // Never mistake an explicitly numbered episode for a whole-season pack.
     var russianPostfix = /(?:^|[^\d])(\d{1,2})(?!\d)\s+\u0441\u0435\u0437\u043e\u043d(?:\u0430)?\s*[,;:.\-/]?\s*\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)\s*[:.]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?/gi;
@@ -485,6 +524,9 @@
   }
   function normalize(row, kind, year, season, episode, conf, metadata) {
     if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+    // Do not truncate an untrusted release title before interpreting episode
+    // markers: an explicit episode could be hidden beyond the display cutoff.
+    if (text(row.Title).length > MAX_TITLE_LENGTH) return null;
     var title = clean(row.Title, MAX_TITLE_LENGTH);
     if (!title || !matchesMetadata(row, metadata)) return null;
     var magnet = text(row.MagnetUri);
