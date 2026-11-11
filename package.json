@@ -1,0 +1,16 @@
+{
+  "name": "nuvio-jacred-direct",
+  "version": "0.0.1",
+  "private": true,
+  "description": "JacRed source discovery for Nuvio TV",
+  "scripts": {
+    "check": "node --check jacred-direct.js && node --check tests/provider.test.cjs",
+    "test": "node --test tests/provider.test.cjs",
+    "verify": "npm run check && npm run check:source && npm test",
+    "check:source": "node scripts/validate-source.cjs"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
