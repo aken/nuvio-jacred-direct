@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.11
+/* JacRed Direct for Nuvio - 0.0.12
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -328,8 +328,9 @@
     var prefix = langs.length ? langs.join('/') : '';
     var voices = row.info && Array.isArray(row.info.voices) ? row.info.voices : [];
     var labels = [], voiceSeen = Object.create(null);
-    for (var j = 0; j < voices.length && j < 100; j++) {
+    for (var j = 0; j < voices.length && j < 256; j++) {
       var label = clean(voices[j], 100);
+      if (/[\uD800-\uDBFF]$/.test(label)) label = label.slice(0, -1);
       var key = label.toLowerCase();
       if (label && !voiceSeen[key]) { labels.push(label); voiceSeen[key] = true; }
     }
@@ -337,16 +338,17 @@
     var header = (prefix ? prefix + ' \u00b7 ' : '') + 'Voices: ';
     var chosen = [];
     for (var k = 0; k < labels.length && chosen.length < 4; k++) {
-      var candidate = labels[k].length > 28 ? labels[k].slice(0, 27).trim() + '\u2026' : labels[k];
+      var codepoints = Array.from(labels[k]);
+      var candidate = codepoints.length > 28 ? codepoints.slice(0, 27).join('').trim() + '\u2026' : labels[k];
       var rest = labels.length - k - 1;
-      var suffix = voices.length > 100 ? ' +more' : (rest ? ' +' + rest : '');
+      var suffix = voices.length > 256 && labels.length > 4 ? ' +more' : (rest ? ' +' + rest : '');
       var attempt = header + chosen.concat(candidate).join(' / ') + suffix;
       if (attempt.length > 72) break;
       chosen.push(candidate);
     }
     var omitted = labels.length - chosen.length;
     // A first name can never be larger than the budget after shortening.
-    return header + chosen.join(' / ') + (voices.length > 100 ? ' +more' : (omitted ? ' +' + omitted : ''));
+    return header + chosen.join(' / ') + (voices.length > 256 && omitted > 0 ? ' +more' : (omitted ? ' +' + omitted : ''));
   }
   function normalizedWords(value) {
     return clean(value, MAX_TITLE_LENGTH).toLowerCase()
@@ -595,14 +597,13 @@
     var audio = sourceAudioDetails(row);
     var display = shortReleaseLabel(title, metadata) + '\n' + technical.filter(Boolean).join(' \u00b7 ');
     if (audio) display += '\n' + audio;
-    if (pack) display += '\nEpisode selection not verified';
     var trackers = magnetTrackers(magnet);
     return {
       url: buildMagnet(hash, trackers),
       trackers: trackers,
       infoHash: hash,
       title: display,
-      name: q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Season pack' : ''),
+      name: q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Multi-episode' : ''),
       quality: q,
       seeders: seeds,
       qualityRank: qualityRank(q),

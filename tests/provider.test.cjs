@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.11');
+  assert.equal(manifest.version, '0.0.12');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -183,7 +183,7 @@ test('deduplication picks a standalone episode over a season pack', async () => 
   const x = await run([pack([sample('TV S01 complete 4K',HASH_A,40),sample('TV S01E02 1080p',HASH_A,1)])], '42','series',1,2);
   assert.equal(x.found.length,1);
   assert.equal(x.found[0].quality,'1080p');
-  assert.ok(!x.found[0].name.includes('Episode selection not verified'));
+  assert.ok(!x.found[0].name.includes('Multi-episode'));
 });
 test('sorts standalone episodes first, then seed count', async () => {
   const x = await run([pack([sample('Show S01E02 720p',HASH_A,2),sample('Show S01 1080p',HASH_B,100),sample('Show S01E02 1080p',HASH_C,20)])], '42','series',1,2);
@@ -245,7 +245,7 @@ test('episode ranges are matched and flagged for file selection', async () => {
   const x = await run([pack([sample('Show S01E01-E10',HASH_A),sample('Show S01E11-E14',HASH_B)])], '42','series',1,7);
   assert.equal(x.found.length,1);
   assert.equal(x.found[0].infoHash,HASH_A);
-  assert.match(x.found[0].title,/Episode selection not verified/);
+  assert.match(x.found[0].name,/Multi-episode/);
 });
 test('numeric season x episode notation is supported', async () => {
   const x = await run([pack([sample('Show 2x05',HASH_A),sample('Show 1x05',HASH_B)])], '42','tv',2,5);
@@ -259,7 +259,7 @@ test('localized season/episode labels are supported', async () => {
 test('adjacent S01E02E03 markers include episode 3 without claiming file accuracy', async () => {
   const x = await run([pack([sample('Show S01E02E03',HASH_A)])], '42','series',1,3);
   assert.equal(x.found.length,1);
-  assert.match(x.found[0].title,/Episode selection not verified/);
+  assert.match(x.found[0].name,/Multi-episode/);
 });
 test('multi-episode releases obey the optional pack restriction', async () => {
   const x = await run([pack([sample('Show S01E01-E10',HASH_A)])], '42','series',1,7,{settings:{allowSeasonPacks:false}});
@@ -268,7 +268,7 @@ test('multi-episode releases obey the optional pack restriction', async () => {
 test('season-only packs are surfaced and marked as unverified', async () => {
   const x = await run([pack([sample('Show S01 Complete',HASH_A)])], '42','series',1,3);
   assert.equal(x.found.length,1);
-  assert.match(x.found[0].title,/Episode selection not verified/);
+  assert.match(x.found[0].name,/Multi-episode/);
 });
 test('season packs can be disabled explicitly', async () => {
   const x = await run([pack([sample('Show S01 Complete',HASH_A)])],'42','series',1,3,{settings:{allowSeasonPacks:false}});
@@ -285,7 +285,7 @@ test('multi-season pack ranges exclude out-of-range seasons', async () => {
 test('JacRed info.seasons permits a pack when explicit season is absent', async () => {
   const x = await run([pack([sample('Show Complete',HASH_A,1,{info:{seasons:[2]}})])], '42','series',2,5);
   assert.equal(x.found.length,1);
-  assert.match(x.found[0].title,/Episode selection not verified/);
+  assert.match(x.found[0].name,/Multi-episode/);
 });
 test('no season/episode evidence is excluded by default', async () => {
   const x = await run([pack([sample('Show 1080p')])], '42','series',1,1);
@@ -294,7 +294,7 @@ test('no season/episode evidence is excluded by default', async () => {
 test('ambiguous episode can be enabled explicitly', async () => {
   const x = await run([pack([sample('Show 1080p')])], '42','series',1,1,{settings:{allowUnknownEpisode:true}});
   assert.equal(x.found.length,1);
-  assert.match(x.found[0].title,/Episode selection not verified/);
+  assert.match(x.found[0].name,/Multi-episode/);
 });
 test('standalone E05 without season is excluded by default', async () => {
   const x = await run([pack([sample('Show E05')])], '42','series',2,5);
@@ -561,7 +561,7 @@ for (const format of ['Show Season 1-3 1080p', 'Show S01-03 1080p', 'Show Season
   test('explicit season span includes the requested third season: ' + format, async () => {
     const x = await run([pack([sample(format)])], '42', 'series', 3, 5);
     assert.equal(x.found.length, 1);
-    assert.match(x.found[0].title, /Episode selection not verified/);
+    assert.match(x.found[0].name, /Multi-episode/);
   });
 }
 test('separate season lists do not imply missing intermediate seasons', async () => {
@@ -595,7 +595,7 @@ test('comma-separated episode lists match only the numbered episodes', async () 
   const title='Show S01E02,E04 1080p';
   const valid=await run([pack([sample(title)])], '42','series',1,4);
   assert.equal(valid.found.length,1);
-  assert.match(valid.found[0].title,/Episode selection not verified/);
+  assert.match(valid.found[0].name,/Multi-episode/);
   const invalid=await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,3);
   assert.equal(invalid.found.length,0);
 });
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.11$/);
+  assert.match(pkg.version,/^0\.0\.12$/);
 });
 
 
@@ -689,7 +689,7 @@ test('named episode ranges exclude episodes outside the advertised interval', as
                        'Show \u0421\u0435\u0437\u043e\u043d 1 \u0421\u0435\u0440\u0438\u0438 1-3']) {
     const yes = await run([pack([sample(title)])], '42', 'series', 1, 3);
     assert.equal(yes.found.length, 1, title);
-    assert.match(yes.found[0].title, /Episode selection not verified/);
+    assert.match(yes.found[0].name, /Multi-episode/);
     const no = await run([pack([sample(title)]),pack([sample(title)])], '42', 'series', 1, 99);
     assert.equal(no.found.length, 0, title);
   }
@@ -710,7 +710,7 @@ test('named episode lists distinguish nonconsecutive episodes', async () => {
 test('named single episodes retain exact matching', async () => {
   const x=await run([pack([sample('Show Season 1: Episode 7')])], '42', 'series', 1, 7);
   assert.equal(x.found.length,1);
-  assert.ok(!x.found[0].name.includes('Season pack'));
+  assert.ok(!x.found[0].name.includes('Multi-episode'));
   const no=await run([pack([sample('Show Season 1: Episode 7')]),pack([])], '42', 'series', 1, 8);
   assert.equal(no.found.length,0);
 });
@@ -729,7 +729,7 @@ test('S01 EP02 notation does not accidentally select unrelated episodes', async 
   const title = 'Show S01 EP02';
   const yes=await run([pack([sample(title)])], '42','series',1,2);
   assert.equal(yes.found.length,1);
-  assert.ok(!yes.found[0].name.includes('Season pack'));
+  assert.ok(!yes.found[0].name.includes('Multi-episode'));
   const no=await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,99);
   assert.equal(no.found.length,0);
 });
@@ -794,7 +794,7 @@ for (const item of explicitEpisodeCases) {
     for (const e of item.yes) {
       const r = await run([pack([sample(item.title)])], '42', 'series', item.season, e);
       assert.equal(r.found.length, 1, item.title+' should match episode '+e);
-      assert.equal(/Episode selection not verified/.test(r.found[0].title), item.pack);
+      assert.equal(/Multi-episode/.test(r.found[0].name), item.pack);
     }
     for (const e of item.no) {
       const r = await run([pack([sample(item.title)]),pack([sample(item.title)])], '42', 'series', item.season, e);
@@ -816,7 +816,7 @@ test('unparsed explicit episode numbers fail closed rather than becoming season 
 test('plain season packs remain supported without an explicit episode number', async () => {
   const r = await run([pack([sample('Show Season 1')])], '42','series',1,8);
   assert.equal(r.found.length,1);
-  assert.match(r.found[0].title,/Episode selection not verified/);
+  assert.match(r.found[0].name,/Multi-episode/);
 });
 
 test('reversed and invalid episode spans do not become valid release matches', async () => {
@@ -861,7 +861,7 @@ test('episode-number-before-label releases never become unrestricted season pack
     for (const episode of included) {
       const x = await run([pack([sample(title)])], '42', 'series', 1, episode);
       assert.equal(x.found.length, 1, `${title} must contain E${episode}`);
-      assert.match(x.found[0].title, /Episode selection not verified|rutracker/);
+      assert.match(x.found[0].title, /rutracker/);
     }
     for (const episode of excluded) {
       const x = await run([pack([sample(title)]),pack([sample(title)])], '42', 'series', 1, episode);
@@ -997,6 +997,47 @@ test('extreme voice arrays are bounded and cannot overwhelm stream cards', async
   const result = await run([pack([sample('Film 1080p',HASH_A,3,{languages:['ru'],info:{voices}})])]);
   const audio = result.found[0].title.split('\n')[2];
   assert.ok(audio.length <= 72, audio);
-  assert.match(audio, /\+more$/);
+  assert.match(audio, /\+176$/);
   assert.ok(audio.startsWith('RU \u00b7 Voices: Voice 0 / Voice 1'));
+});
+
+
+test('partial season bundles get a factual Multi-episode label without a warning line', async () => {
+  const title='\u041a\u0432\u0435\u0441\u0442 \u0412\u0438\u0436\u0435\u043d\u0430 / VisionQuest [1 \u0441\u0435\u0437\u043e\u043d: 1-7 \u0441\u0435\u0440\u0438\u0438 \u0438\u0437 8] (2026) WEB-DL 1080p';
+  const row=sample(title, HASH_A, 191, {Tracker:'megapeer',Peers:965,info:{seasons:[1],voices:['LostFilm','HDRezka']}});
+  const yes=await run([pack([row])], '42', 'series', 1, 3);
+  assert.equal(yes.found.length,1);
+  assert.match(yes.found[0].name,/^1080p.*191 seeds.*Multi-episode$/);
+  assert.equal(yes.found[0].title.split('\n').length,3);
+  assert.doesNotMatch(yes.found[0].title,/not verified|Season pack|Multi-episode/i);
+  assert.equal(yes.found[0].url,'magnet:?xt=urn:btih:'+HASH_A);
+  const no=await run([pack([row]),pack([row])], '42','series',1,8);
+  assert.equal(no.found.length,0);
+});
+test('season-only releases are not labelled as verified complete seasons', async () => {
+  const x=await run([pack([sample('Show Season 1')])], '42', 'series',1,4);
+  assert.equal(x.found.length,1);
+  assert.match(x.found[0].name,/Multi-episode/);
+  assert.doesNotMatch(x.found[0].title,/Episode selection not verified/);
+  assert.doesNotMatch(x.found[0].name,/Season pack/);
+});
+test('single-episode sources are not marked Multi-episode', async () => {
+  const x=await run([pack([sample('Show S01E03')])], '42','series',1,3);
+  assert.equal(x.found.length,1);
+  assert.doesNotMatch(x.found[0].name,/Multi-episode/);
+  assert.equal(x.found[0].title.split('\n').length,2);
+});
+test('more than 100 repeated voice labels do not invent extra voices', async () => {
+  const voices=Array.from({length:180},()=> 'LostFilm');
+  const x=await run([pack([sample('Film 1080p', HASH_A, 8, {info:{voices}})])]);
+  assert.equal(x.found.length,1);
+  assert.equal(x.found[0].title.split('\n')[2], 'Voices: LostFilm');
+});
+test('voice abbreviation never leaves a dangling UTF-16 surrogate', async () => {
+  const voices=['A'.repeat(26)+'\ud83c\udfac'+'B'.repeat(30), 'LostFilm'];
+  const x=await run([pack([sample('Film 1080p',HASH_A,8,{info:{voices}})])]);
+  assert.equal(x.found.length,1);
+  const audio=x.found[0].title.split('\n')[2];
+  assert.ok(audio.length<=72);
+  assert.doesNotMatch(audio,/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
 });
