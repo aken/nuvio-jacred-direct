@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio TV - 0.0.1
+/* JacRed Direct for Nuvio TV - 0.0.2
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -127,8 +127,8 @@
     return bytes.toFixed(i ? 1 : 0) + ' ' + units[i];
   }
   function quality(title) {
-    var value = title.toLowerCase();
-    if (/(?:^|[^\d])(?:2160p?|4k|uhd)(?!\d)/i.test(value)) return '2160p';
+    var value = title.toLowerCase().replace(/_/g, ' ');
+    if (/(?:^|[^a-z\d\u0400-\u052f])(?:2160p?|4[k\u043a]|uhd)(?![a-z\d\u0400-\u052f])/i.test(value)) return '2160p';
     if (/(?:^|[^\d])(?:1080p?|fhd|full[ ._-]?hd)(?!\d)/i.test(value)) return '1080p';
     if (/(?:^|[^\d])720p?(?!\d)/i.test(value)) return '720p';
     if (/(?:^|[^\d])480p?(?!\d)/i.test(value)) return '480p';
@@ -139,6 +139,56 @@
     if (row.Seeders === null || row.Seeders === undefined || row.Seeders === '') return -1;
     var number = Number(row.Seeders);
     return Number.isSafeInteger(number) && number >= 0 ? number : -1;
+  }
+  function peersCount(row) {
+    if (row.Peers === null || row.Peers === undefined || row.Peers === '') return -1;
+    var value = Number(row.Peers);
+    return Number.isSafeInteger(value) && value >= 0 ? value : -1;
+  }
+  function releaseTags(title) {
+    var t = title.replace(/_/g, ' ');
+    var tags = [];
+    var format = t.match(/\b(?:WEB-DL|WEBRip|BDRemux|BDRip|HDRip|DVDRip)\b/i);
+    if (format) tags.push(format[0].toUpperCase());
+    var modern = /(?:2160|4[k\u043a]|UHD|HEVC|H[ .-]?265|x265)/i.test(t);
+    if (/\b(?:DoVi|Dolby[ .-]?Vision)\b/i.test(t) ||
+       (/\bDV\b/i.test(t) && modern && !/\.avi(?:\b|$)/i.test(t))) tags.push('DV');
+    if (/\bHDR10\+(?![a-z0-9])/i.test(t)) tags.push('HDR10+');
+    else if (/\b(?:HDR10|HDR)\b/i.test(t) && !/\bSDR\b/i.test(t)) tags.push('HDR');
+    if (/\b(?:HEVC|H[ .-]?265|x265)\b/i.test(t)) tags.push('HEVC');
+    return tags;
+  }
+  function sourceAudioDetails(row) {
+    var details = [];
+    var langs = [], seen = Object.create(null);
+    var languageMap = { ru: 'RU', rus: 'RU', russian: 'RU', en: 'EN', eng: 'EN', english: 'EN', uk: 'UKR', ukr: 'UKR', ukrainian: 'UKR', de: 'DE', deu: 'DE', german: 'DE', fr: 'FR', fra: 'FR', french: 'FR', ja: 'JA', jpn: 'JA', japanese: 'JA' };
+    var items = Array.isArray(row.languages) ? row.languages : [];
+    for (var i = 0; i < items.length && i < 20 && langs.length < 3; i++) {
+      var code = languageMap[text(items[i]).toLowerCase()];
+      if (code && !seen[code]) { seen[code] = true; langs.push(code); }
+    }
+    if (langs.length) details.push('Languages: ' + langs.join('/'));
+    var voices = row.info && Array.isArray(row.info.voices) ? row.info.voices : [];
+    var labels = [], voiceSeen = Object.create(null);
+    for (var j = 0; j < voices.length && j < 20 && labels.length < 2; j++) {
+      var label = clean(voices[j], 36);
+      if (label && !voiceSeen[label.toLowerCase()]) { labels.push(label); voiceSeen[label.toLowerCase()] = true; }
+    }
+    if (labels.length) details.push('Voice: ' + labels.join(' / '));
+    return details;
+  }
+  function normalizedWords(value) {
+    return clean(value, MAX_TITLE_LENGTH).toLowerCase()
+      .replace(/[^a-z0-9\u00c0-\u024f\u0370-\u052f\u0590-\u06ff\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+/g, ' ').trim();
+  }
+  function matchesMetadata(row, metadata) {
+    if (!metadata || (!metadata.title && !metadata.original)) return true;
+    var release = ' ' + normalizedWords([row.Title, row.info && row.info.name,
+      row.info && row.info.originalname].filter(Boolean).join(' ')) + ' ';
+    return [metadata.title, metadata.original].some(function (alias) {
+      var name = normalizedWords(alias);
+      return name.length > 1 && release.indexOf(' ' + name + ' ') !== -1;
+    });
   }
   function releaseYearMatches(row, year) {
     if (!year) return true;
@@ -209,9 +259,10 @@
     }
     return { ok: conf.allowUnknownEpisode, pack: true };
   }
-  function normalize(row, kind, year, season, episode, conf) {
+  function normalize(row, kind, year, season, episode, conf, metadata) {
     if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
     var title = clean(row.Title, MAX_TITLE_LENGTH);
+    if (!title || !matchesMetadata(row, metadata)) return null;
     var magnet = text(row.MagnetUri);
     if (!title || !magnet || magnet.length > MAX_MAGNET_LENGTH) return null;
     var hash = infoHash(magnet);
@@ -227,26 +278,32 @@
     }
     var q = quality(title);
     var sz = sizeText(row.Size);
-    var tracker = clean(row.Tracker, 35) || 'tracker';
-    var parts = [tracker, q, sz, seeds < 0 ? 'Seed count unknown' : seeds + (seeds === 1 ? ' seed' : ' seeds')];
-    if (pack) parts.push('Episode selection not verified');
+    var tracker = clean(row.Tracker, 35) || 'Unknown tracker';
+    var availability = seeds < 0 ? 'Seeders unknown' : seeds + (seeds === 1 ? ' seed' : ' seeds');
+    var details = [tracker, sz];
+    var peers = peersCount(row);
+    if (peers >= 0) details.push(peers + (peers === 1 ? ' leecher' : ' leechers'));
+    details = details.concat(releaseTags(title), sourceAudioDetails(row));
+    // Nuvio maps a supplied `size` field into stream.description and hides
+    // stream.title on its source cards. Keep size inside title instead.
+    var display = title + '\n' + details.filter(Boolean).join(' \u00b7 ');
+    if (pack) display += '\nEpisode selection not verified';
     return {
       url: magnet,
       infoHash: hash,
-      title: title,
-      name: 'JacRed | ' + parts.join(' | '),
+      title: display,
+      name: '\u{1D5E7} JacRed \u00b7 ' + q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Season pack' : ''),
       quality: q,
-      size: sz,
       seeders: seeds,
       qualityRank: qualityRank(q),
       isPack: pack
     };
   }
-  function normalizeResults(rows, kind, year, season, episode, conf) {
+  function normalizeResults(rows, kind, year, season, episode, conf, metadata) {
     var distinct = Object.create(null);
     if (!Array.isArray(rows)) return [];
     for (var i = 0; i < rows.length && i < MAX_ROWS; i++) {
-      var current = normalize(rows[i], kind, year, season, episode, conf);
+      var current = normalize(rows[i], kind, year, season, episode, conf, metadata);
       if (!current) continue;
       var previous = distinct[current.infoHash];
       if (!previous || (previous.isPack && !current.isPack) || (previous.isPack === current.isPack && (current.seeders > previous.seeders || (current.seeders === previous.seeders && current.qualityRank > previous.qualityRank)))) {
@@ -256,7 +313,7 @@
     return Object.keys(distinct).map(function (key) { return distinct[key]; }).sort(function (a,b) {
       return Number(a.isPack) - Number(b.isPack) || b.seeders - a.seeders || b.qualityRank - a.qualityRank || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0);
     }).slice(0, conf.maxResults).map(function (r) {
-      return { url: r.url, infoHash: r.infoHash, title: r.title, name: r.name, quality: r.quality, size: r.size };
+      return { url: r.url, infoHash: r.infoHash, title: r.title, name: r.name, quality: r.quality };
     });
   }
   async function searchJacred(params) {
@@ -284,7 +341,7 @@
 
     var results = [];
     try {
-      results = normalizeResults(await searchJacred(request), kind, metadata && metadata.year, s, e, conf);
+      results = normalizeResults(await searchJacred(request), kind, metadata && metadata.year, s, e, conf, metadata);
     } catch (error) {
       warn('JacRed card search failed', error);
       if (error && (error.status === 401 || error.status === 403 || error.status === 429)) return [];
@@ -299,13 +356,14 @@
     if (metadata) {
       if (metadata.title) fallback.title = metadata.title;
       if (metadata.original) fallback.title_original = metadata.original;
-      if (metadata.year) fallback.year = metadata.year;
-      if (kind === 'movie') fallback = { is_serial: filter.is_serial, query: 'tmdb' + id };
+      // A valid title with a mismatched catalogue year can produce a false
+      // negative. Retry without the server year filter, and validate the
+      // release year and title locally before returning any candidate.
     } else if (kind === 'series') fallback.query = 'tmdb' + id;
     else return [];
     // A movie without metadata has already made precisely this ID query.
     if (JSON.stringify(fallback) === JSON.stringify(request)) return [];
-    try { return normalizeResults(await searchJacred(fallback), kind, metadata && metadata.year, s, e, conf); }
+    try { return normalizeResults(await searchJacred(fallback), kind, metadata && metadata.year, s, e, conf, metadata); }
     catch (error) { warn('JacRed fallback search failed', error); return []; }
   }
   module.exports.getStreams = getStreams;

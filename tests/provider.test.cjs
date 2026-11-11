@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.1');
+  assert.equal(manifest.version, '0.0.2');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -132,11 +132,12 @@ for (const status of [401,403,429]) test('JacRed HTTP '+status+' is not retried'
   assert.equal(x.calls.length,1);
   assert.equal(x.found.length,0);
 });
-test('a failed metadata card search retries with TMDB ID only once', async () => {
+test('an empty metadata card search retries titles without the year once', async () => {
   const x = await run([movieMeta,pack([]),pack([sample()])],'603','movie',null,null,{tmdbKey:'KEY'});
   assert.equal(x.found.length,1);
   assert.equal(x.calls.length,3);
-  assert.equal(query(x.calls[2]).searchParams.get('query'),'tmdb603');
+  assert.equal(query(x.calls[2]).searchParams.get('year'),null);
+  assert.equal(query(x.calls[2]).searchParams.get('title_original'),'The Matrix');
 });
 test('a useful card search never makes a fallback request', async () => {
   const x = await run([movieMeta,pack([sample()])],'603','movie',null,null,{tmdbKey:'KEY'});
@@ -190,8 +191,8 @@ test('sorts standalone episodes first, then seed count', async () => {
 });
 test('reports size and unknown seed count accurately', async () => {
   const x = await run([pack([sample('Film 1080p',HASH_A,undefined,{Size:1073741824,Seeders:null})])]);
-  assert.match(x.found[0].name,/1.0 GiB/);
-  assert.match(x.found[0].name,/Seed count unknown/);
+  assert.match(x.found[0].title,/1.0 GiB/);
+  assert.match(x.found[0].name,/Seeders unknown/);
 });
 test('known zero seeders remain visible by default', async () => {
   const x = await run([pack([sample('Film',HASH_A,0)])]);
@@ -202,16 +203,16 @@ test('minimum seeders excludes weak known counts but not unknown counts', async 
   assert.equal(x.found.length,2);
 });
 test('strict year gate skips wrong movie, accepts exact year', async () => {
-  const x = await run([movieMeta,pack([sample('Film 2024 1080p'),sample('Film 1999 1080p',HASH_B)])], '603','movie',null,null,{tmdbKey:'KEY'});
+  const x = await run([movieMeta,pack([sample('The Matrix 2024 1080p'),sample('The Matrix 1999 1080p',HASH_B)])], '603','movie',null,null,{tmdbKey:'KEY'});
   assert.equal(x.found[0].infoHash,HASH_B);
   assert.equal(x.found.length,1);
 });
 test('server release-year metadata takes precedence over title year', async () => {
-  const x = await run([movieMeta,pack([sample('Film 2024 Remaster 1080p',HASH_A,1,{info:{relased:1999}})])], '603','movie',null,null,{tmdbKey:'KEY'});
+  const x = await run([movieMeta,pack([sample('The Matrix 2024 Remaster 1080p',HASH_A,1,{info:{relased:1999}})])], '603','movie',null,null,{tmdbKey:'KEY'});
   assert.equal(x.found.length,1);
 });
 test('unknown release year does not cause a false-negative movie result', async () => {
-  const x = await run([movieMeta,pack([sample('Film 1080p')])], '603','movie',null,null,{tmdbKey:'KEY'});
+  const x = await run([movieMeta,pack([sample('The Matrix 1080p')])], '603','movie',null,null,{tmdbKey:'KEY'});
   assert.equal(x.found.length,1);
 });
 test('1920x1080 video dimensions are not mistaken for release years', async () => {
@@ -243,7 +244,7 @@ test('episode ranges are matched and flagged for file selection', async () => {
   const x = await run([pack([sample('Show S01E01-E10',HASH_A),sample('Show S01E11-E14',HASH_B)])], '42','series',1,7);
   assert.equal(x.found.length,1);
   assert.equal(x.found[0].infoHash,HASH_A);
-  assert.match(x.found[0].name,/Episode selection not verified/);
+  assert.match(x.found[0].title,/Episode selection not verified/);
 });
 test('numeric season x episode notation is supported', async () => {
   const x = await run([pack([sample('Show 2x05',HASH_A),sample('Show 1x05',HASH_B)])], '42','tv',2,5);
@@ -257,7 +258,7 @@ test('localized season/episode labels are supported', async () => {
 test('adjacent S01E02E03 markers include episode 3 without claiming file accuracy', async () => {
   const x = await run([pack([sample('Show S01E02E03',HASH_A)])], '42','series',1,3);
   assert.equal(x.found.length,1);
-  assert.match(x.found[0].name,/Episode selection not verified/);
+  assert.match(x.found[0].title,/Episode selection not verified/);
 });
 test('multi-episode releases obey the optional pack restriction', async () => {
   const x = await run([pack([sample('Show S01E01-E10',HASH_A)])], '42','series',1,7,{settings:{allowSeasonPacks:false}});
@@ -266,7 +267,7 @@ test('multi-episode releases obey the optional pack restriction', async () => {
 test('season-only packs are surfaced and marked as unverified', async () => {
   const x = await run([pack([sample('Show S01 Complete',HASH_A)])], '42','series',1,3);
   assert.equal(x.found.length,1);
-  assert.match(x.found[0].name,/Episode selection not verified/);
+  assert.match(x.found[0].title,/Episode selection not verified/);
 });
 test('season packs can be disabled explicitly', async () => {
   const x = await run([pack([sample('Show S01 Complete',HASH_A)])],'42','series',1,3,{settings:{allowSeasonPacks:false}});
@@ -283,7 +284,7 @@ test('multi-season pack ranges exclude out-of-range seasons', async () => {
 test('JacRed info.seasons permits a pack when explicit season is absent', async () => {
   const x = await run([pack([sample('Show Complete',HASH_A,1,{info:{seasons:[2]}})])], '42','series',2,5);
   assert.equal(x.found.length,1);
-  assert.match(x.found[0].name,/Episode selection not verified/);
+  assert.match(x.found[0].title,/Episode selection not verified/);
 });
 test('no season/episode evidence is excluded by default', async () => {
   const x = await run([pack([sample('Show 1080p')])], '42','series',1,1);
@@ -292,7 +293,7 @@ test('no season/episode evidence is excluded by default', async () => {
 test('ambiguous episode can be enabled explicitly', async () => {
   const x = await run([pack([sample('Show 1080p')])], '42','series',1,1,{settings:{allowUnknownEpisode:true}});
   assert.equal(x.found.length,1);
-  assert.match(x.found[0].name,/Episode selection not verified/);
+  assert.match(x.found[0].title,/Episode selection not verified/);
 });
 test('standalone E05 without season is excluded by default', async () => {
   const x = await run([pack([sample('Show E05')])], '42','series',2,5);
@@ -315,7 +316,7 @@ test('invalid output limit settings are ignored', async () => {
 });
 test('malicious control characters are removed from returned labels', async () => {
   const x = await run([pack([sample('Film\u202etitle\u0000text',HASH_A,1,{Tracker:'R\u0000T'})])]);
-  assert.ok(!/[\u0000-\u001f\u202a-\u202e]/.test(x.found[0].title));
+  assert.ok(!/[\u0000-\u0009\u000b-\u001f\u202a-\u202e]/.test(x.found[0].title));
   assert.ok(!/[\u0000-\u001f\u202a-\u202e]/.test(x.found[0].name));
 });
 test('unexpected response row types and invalid torrent fields do not crash', async () => {
@@ -325,7 +326,7 @@ test('unexpected response row types and invalid torrent fields do not crash', as
 test('returns Nuvio-supported primitive property types', async () => {
   const x = await run([pack([sample()])]);
   const result=x.found[0];
-  assert.deepEqual(Object.keys(result).sort(),['infoHash','name','quality','size','title','url'].sort());
+  assert.deepEqual(Object.keys(result).sort(),['infoHash','name','quality','title','url'].sort());
   assert.ok(Object.values(result).every(v => typeof v === 'string'));
 });
 test('display labels use clear language for torrent availability', async () => {
@@ -353,4 +354,73 @@ test('public JacRed requests do not transmit API credentials', async () => {
     const headers = (request.options && request.options.headers) || {};
     assert.ok(!Object.keys(headers).some(k => /^(x-api-key|authorization)$/i.test(k)));
   }
+});
+
+
+test('native source card preserves the release name and includes availability details', async () => {
+  const x = await run([pack([sample('The Matrix 1999 1080p WEB-DL HDR10+ HEVC',HASH_A,7,{Peers:0})])]);
+  const item = x.found[0];
+  assert.match(item.name,/JacRed.*1080p.*7 seeds/);
+  assert.match(item.title,/^The Matrix 1999 1080p WEB-DL HDR10\+ HEVC\n/);
+  assert.match(item.title,/rutracker.*8.0 GiB.*0 leechers.*WEB-DL.*HDR10\+.*HEVC/);
+  assert.ok(!Object.hasOwn(item, 'size'), 'Nuvio must use release title rather than size for description');
+});
+test('no guessed leecher counts and single leecher grammar', async () => {
+  const x=await run([pack([sample('The Matrix 1999 1080p',HASH_A,0),sample('The Matrix 1999 720p',HASH_B,1,{Peers:1})])]);
+  const byHash = new Map(x.found.map(v=>[v.infoHash,v]));
+  assert.ok(!byHash.get(HASH_A).title.includes('leecher'));
+  assert.match(byHash.get(HASH_B).title,/1 leecher/);
+});
+test('short DV voice metadata is not mistaken for Dolby Vision on old AVI releases', async () => {
+  const x=await run([pack([sample('The Matrix 1999 DV AVI 1080p',HASH_A,4)])]);
+  assert.ok(!x.found[0].title.includes('\u00b7 DV'));
+});
+test('Cyrillic K in explicit 4K quality label is supported', async () => {
+  const x=await run([pack([sample('The Matrix 1999 4\u041a HDR',HASH_A,4)])]);
+  assert.match(x.found[0].name,/2160p/);
+  assert.match(x.found[0].title,/HDR/);
+});
+test('movie fallback retries the localized card without a server-side year', async () => {
+  const x=await run([movieMeta, pack([]), pack([sample('The Matrix 1999 1080p')])], '603','movie',null,null,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,1);
+  assert.equal(x.calls.length,3);
+  assert.equal(query(x.calls[1]).searchParams.get('year'),'1999');
+  assert.equal(query(x.calls[2]).searchParams.get('year'),null);
+  assert.equal(query(x.calls[2]).searchParams.get('title_original'),'The Matrix');
+  assert.equal(query(x.calls[2]).searchParams.get('query'),null);
+});
+test('fallback does not accept unrelated release or mismatched year', async () => {
+  const x=await run([movieMeta, pack([]), pack([
+    sample('The Matrix 1999 WEB-DL', HASH_A),
+    sample('Italian Film 1999', HASH_B),
+    sample('The Matrix 2015 1080p', HASH_C)
+  ])], '603','movie',null,null,{tmdbKey:'KEY'});
+  // A release containing the full title and year can legitimately include extra words.
+  assert.equal(x.found.length,1);
+  assert.match(x.found[0].title,/The Matrix 1999 WEB-DL/);
+});
+test('a short movie title cannot match part of a longer word', async () => {
+  const x=await run([{data:{title:'It',original_title:'It',release_date:'2017-09-08'}},pack([
+    sample('Italian 2017 1080p',HASH_A),sample('It (2017) 1080p',HASH_B)
+  ])], '346364','movie',null,null,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,1);
+  assert.match(x.found[0].title,/^It \(2017\)/);
+});
+test('release matching rejects unrelated results before deciding whether to fallback', async () => {
+  const x=await run([movieMeta,pack([sample('Unrelated 1999 1080p')]),pack([sample('The Matrix 1999 1080p')])], '603','movie',null,null,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,1);
+  assert.equal(x.calls.length,3);
+});
+
+
+test('source cards include only explicitly reported language and voice metadata', async () => {
+  const row=sample('The Matrix 1999 1080p',HASH_A,7,{languages:['ru','en','ru','xx'],info:{voices:['LostFilm','NewStudio','LostFilm']}});
+  const x=await run([pack([row])]);
+  assert.match(x.found[0].title,/Languages: RU\/EN/);
+  assert.match(x.found[0].title,/Voice: LostFilm \/ NewStudio/);
+  assert.ok(!x.found[0].title.includes('xx'));
+});
+test('tracker names do not imply an audio language', async () => {
+  const x=await run([pack([sample('The Matrix 1999 1080p',HASH_A,3,{Tracker:'Russian Tracker'})])]);
+  assert.ok(!x.found[0].title.includes('Languages:'));
 });

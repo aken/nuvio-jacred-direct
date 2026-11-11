@@ -30,7 +30,7 @@ The public JacRed service can change its access rules. This version does not sup
 
 ## How it works
 
-The plugin searches JacRed using movie or series metadata from TMDB, verifies magnet hashes, removes duplicate releases, and sorts the remaining results. When metadata is unavailable, it can fall back to JacRed's TMDB ID lookup, which depends on the external service's configuration.
+The plugin searches JacRed using movie or series metadata from TMDB, verifies magnet hashes, removes duplicate releases, and sorts the remaining results. Its native source cards show the release name, tracker, reported seeders, optional leechers, size, supported quality labels, and language or voice data when JacRed reports it. It never infers audio language from the tracker name. These are text fields rendered by Nuvio; the plugin cannot create custom poster cards or change the TV interface. When a title-and-year search is empty, it retries the known titles without the year constraint while checking returned titles and years locally. When metadata is unavailable, it can fall back to JacRed's TMDB ID lookup, which depends on the external service's configuration.
 
 For TV episodes, it checks the season and episode numbers where they can be identified. Results that may contain more than one episode are labelled **Episode selection not verified**. Nuvio's EngineFS still has to select the correct file; the plugin cannot guarantee that choice.
 
@@ -45,7 +45,8 @@ Seeder counts are provided by JacRed and may be incomplete or outdated. A magnet
 - The plugin does not download, host or distribute video. Nuvio's P2P playback may exchange data with other peers.
 - Results depend on JacRed availability, its index, and any rate limits or authentication policy.
 - Multi-file torrents may play the wrong file if EngineFS cannot identify the requested episode. Verify playback rather than assuming an accurate episode match.
-- The plugin does not run a background service or keep a separate search cache.
+- The plugin does not run a background service or keep a separate search cache. Nuvio may manage client-side source caching independently.
+- The native Nuvio plugin adapter does not retain an original torrent file index or supply an addon logo. Therefore, exact multi-file selection and image-based stream cards are not features this plugin can promise.
 
 ## Troubleshooting
 
