@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.12');
+  assert.equal(manifest.version, '0.0.13');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.12$/);
+  assert.match(pkg.version,/^0\.0\.13$/);
 });
 
 
@@ -912,7 +912,13 @@ test('conflicting resolution tokens never claim a verified playback resolution',
     ['Film 1080p 2160p', 'Unknown'],
     ['Film 4K 1080p', 'Unknown'],
     ['Film 4K UHD 2160p', '2160p'],
-    ['Film 1920x1080 4K source', '1080p']
+    ['Film 1920x1080 2160p WEB-DL', 'Unknown'],
+    ['Film 3840x2160 1080p WEB-DL', 'Unknown'],
+    ['Film 1280x720 1920x1080', 'Unknown'],
+    ['Film 3840x2160 2160p', '2160p'],
+    ['Film 1920x1080 1080p', '1080p'],
+    ['Film 1920x1080', '1080p'],
+    ['Film 1920x1080 4K source', 'Unknown']
   ];
   for (const [title, expected] of cases) {
     const x = await run([pack([sample(title)])]);

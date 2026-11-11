@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.12
+/* JacRed Direct for Nuvio - 0.0.13
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -271,9 +271,16 @@
     var value = title.toLowerCase().replace(/_/g, ' ');
     // Prefer explicit dimensions. A bare four-digit resolution label must end
     // at a token boundary; 21601080 is not a 2160p label.
-    var dimensions = /(?:^|[^0-9])(\d{3,4})\s*[x\u00d7]\s*(4320|2160|1440|1080|720|576|480)(?!\d)/i.exec(value);
-    if (dimensions && Number(dimensions[1]) >= Number(dimensions[2]) && Number(dimensions[1]) <= Number(dimensions[2]) * 3)
-      return Number(dimensions[2]) === 2160 ? '2160p' : dimensions[2] + 'p';
+    var detected = Object.create(null);
+    // Dimensions and resolution labels must agree. A width/height pair alone
+    // used to short-circuit this validation and mislabel mixed releases.
+    var dimensionPattern = /(?:^|[^0-9])(\d{3,4})\s*[x\u00d7]\s*(4320|2160|1440|1080|720|576|480)(?!\d)/gi;
+    var dimensions;
+    while ((dimensions = dimensionPattern.exec(value)) !== null) {
+      var width = Number(dimensions[1]), height = Number(dimensions[2]);
+      if (width >= height && width <= height * 3)
+        detected[height === 2160 ? '2160p' : height + 'p'] = true;
+    }
     var labels = [
       ['4320p', /(?:^|[^a-z\d\u0400-\u052f])(?:4320(?:p(?:\d{2,3})?(?:fps|hz)?)?|8[k\u043a])(?![a-z\d\u0400-\u052f])/i],
       ['2160p', /(?:^|[^a-z\d\u0400-\u052f])(?:2160(?:p(?:\d{2,3})?(?:fps|hz)?)?|4[k\u043a]|uhd)(?![a-z\d\u0400-\u052f])/i],
@@ -284,9 +291,10 @@
     ];
     // An ambiguous release title may describe the source and the actual
     // encode at different resolutions. Never advertise the higher one as fact.
-    var detected = [];
-    for (var i = 0; i < labels.length; i++) if (labels[i][1].test(value)) detected.push(labels[i][0]);
-    return detected.length === 1 ? detected[0] : 'Unknown';
+    for (var i = 0; i < labels.length; i++)
+      if (labels[i][1].test(value)) detected[labels[i][0]] = true;
+    var resolutions = Object.keys(detected);
+    return resolutions.length === 1 ? resolutions[0] : 'Unknown';
   }
   function qualityRank(q) { return q === '4320p' ? 6 : q === '2160p' ? 5 : q === '1440p' ? 4 : q === '1080p' ? 3 : q === '720p' ? 2 : q === '480p' ? 1 : 0; }
   function seedCount(row) {
