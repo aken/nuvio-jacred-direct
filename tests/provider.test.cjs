@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.2');
+  assert.equal(manifest.version, '0.0.3');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -423,4 +423,42 @@ test('source cards include only explicitly reported language and voice metadata'
 test('tracker names do not imply an audio language', async () => {
   const x=await run([pack([sample('The Matrix 1999 1080p',HASH_A,3,{Tracker:'Russian Tracker'})])]);
   assert.ok(!x.found[0].title.includes('Languages:'));
+});
+
+test('manifest allows the host to determine platform availability', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
+  const provider = manifest.scrapers[0];
+  assert.ok(!Object.prototype.hasOwnProperty.call(provider, 'supportedPlatforms'));
+  assert.ok(!Object.prototype.hasOwnProperty.call(provider, 'disabledPlatforms'));
+  assert.ok(['movie', 'series', 'tv', 'anime'].every(kind => provider.supportedTypes.includes(kind)));
+  assert.equal(provider.version, manifest.version);
+});
+
+test('Android TV, webOS and Tizen use the same platform-independent provider API', async () => {
+  const id = '42';
+  const title = 'Example S02E05 1080p';
+  for (const mediaType of ['tv', 'series', 'anime']) {
+    const result = await run([pack([sample(title)])], id, mediaType, 2, 5);
+    assert.equal(result.found.length, 1, mediaType);
+    assert.equal(result.found[0].infoHash, HASH_A, mediaType);
+    assert.equal(query(result.calls[0]).searchParams.get('is_serial'), '2');
+    assert.equal(query(result.calls[0]).searchParams.get('season'), '2');
+    assert.equal(query(result.calls[0]).searchParams.get('ep'), '5');
+  }
+  const movie = await run([pack([sample()])], '603', 'movie');
+  assert.equal(movie.found.length, 1);
+  assert.equal(query(movie.calls[0]).searchParams.get('is_serial'), '1');
+});
+
+test('result labels use universally available characters', async () => {
+  const result = await run([pack([sample()])]);
+  assert.equal(result.found.length, 1);
+  assert.ok(result.found[0].name.startsWith('JacRed'));
+  assert.ok(!/[\uD835][\uDC00-\uDFFF]/.test(result.found[0].name));
+});
+
+test('provider does not assume a browser DOM or a TV-specific global API', () => {
+  assert.ok(!/\b(?:document|navigator|location|tizen|webOS|webos|Android)\./.test(source));
+  assert.ok(!/\brequire\s*\(/.test(source));
+  assert.ok(!/\bprocess\./.test(source));
 });

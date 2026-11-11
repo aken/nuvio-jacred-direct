@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio TV - 0.0.2
+/* JacRed Direct for Nuvio - 0.0.3
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -292,7 +292,7 @@
       url: magnet,
       infoHash: hash,
       title: display,
-      name: '\u{1D5E7} JacRed \u00b7 ' + q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Season pack' : ''),
+      name: 'JacRed \u00b7 ' + q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Season pack' : ''),
       quality: q,
       seeders: seeds,
       qualityRank: qualityRank(q),
