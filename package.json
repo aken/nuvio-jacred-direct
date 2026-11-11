@@ -1,6 +1,6 @@
 {
   "name": "nuvio-jacred-direct",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "private": true,
   "description": "JacRed source discovery for Nuvio TV",
   "scripts": {

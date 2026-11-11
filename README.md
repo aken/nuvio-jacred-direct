@@ -40,7 +40,7 @@ The public JacRed service can change its access rules. This version does not sup
 
 ## How it works
 
-The plugin searches JacRed using movie or series metadata from TMDB, validates BTIH hashes, merges usable public trackers across duplicate releases, and sorts the remaining results. Its native source cards show the release name, tracker, reported seeders, optional peer counts, size, supported quality labels, and language or voice data when JacRed reports it. It never infers audio language from the tracker name. These are text fields rendered by Nuvio; the plugin cannot create custom poster cards or change the TV interface. When a title-and-year search is empty, it retries the known titles without the year constraint while checking returned release titles and film years locally. It does not treat a JacRed catalog alias alone as proof that a different release is the requested film. When metadata is unavailable, it can fall back to JacRed's TMDB ID lookup, which depends on the external service's configuration.
+The plugin searches JacRed using movie or series metadata from TMDB, validates BTIH hashes, merges usable public trackers across duplicate releases, and sorts the remaining results. Native source cards avoid repeating the provider name already shown by Nuvio, and show a shortened release heading, tracker, format, size, reported seeders and peer counts, and language or voice details only when JacRed reports them. The original title remains the basis for search matching and episode parsing. It never infers audio language from the tracker name. These are text fields rendered by Nuvio; the plugin cannot create custom poster cards or change the TV interface. When a title-and-year search is empty, it retries the known titles without the year constraint while checking returned release titles and film years locally. It does not treat a JacRed catalog alias alone as proof that a different release is the requested film. When metadata is unavailable, it can fall back to JacRed's TMDB ID lookup, which depends on the external service's configuration.
 
 For TV episodes, it checks the season and episode numbers where they can be identified. Results that may contain more than one episode are labelled **Episode selection not verified**. Nuvio's torrent engine still has to select the correct file; the plugin cannot guarantee that choice.
 
@@ -75,6 +75,26 @@ If there are no sources, check that the provider is enabled and the local plugin
 ## Diagnostics
 
 For intermittent failures, capture the Nuvio version, plugin test diagnostics, media type, TMDB ID, HTTP status (if shown), and whether the source was listed but not playable. These details help distinguish JacRed lookup errors from host runtime limits and playback engine failures. Do not share API keys or private tracker credentials.
+
+## Samsung: Tizen EngineFS create timeout
+
+A `p2p-resolve` error with `Tizen streaming server create request timed out`
+means Nuvio's local torrent engine did not answer its `/create` request
+within its 60-second frontend deadline. The torrent player has not yet
+started; this is **not evidence of a video codec problem**. The provider
+already supplied its magnet and BTIH to the host. Indexed seeder counts
+are not a live peer test. One or more peers or trackers may be unreachable,
+or the local EngineFS service may be stalled. The provider cannot change
+Nuvio's engine deadline or force a metadata download.
+
+To isolate the failure, try a different legally accessible source, then
+compare whether the same hash works through another provider in Nuvio. If
+all magnets time out, collect Nuvio's Tizen P2P/EngineFS diagnostics and
+check the bundled service rather than changing the JacRed provider. Do not
+add unrelated public trackers automatically: the plugin cannot establish
+from a magnet whether a torrent is private and should not leak its hash
+to additional trackers.
+
 
 ## Samsung playback checks
 

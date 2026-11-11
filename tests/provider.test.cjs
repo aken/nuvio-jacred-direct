@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.9');
+  assert.equal(manifest.version, '0.0.10');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -362,9 +362,9 @@ test('public JacRed requests do not transmit API credentials', async () => {
 test('native source card preserves the release name and includes availability details', async () => {
   const x = await run([pack([sample('The Matrix 1999 1080p WEB-DL HDR10+ HEVC',HASH_A,7,{Peers:0})])]);
   const item = x.found[0];
-  assert.match(item.name,/JacRed.*1080p.*7 seeds/);
+  assert.match(item.name,/^1080p.*7 seeds/);
   assert.match(item.title,/^The Matrix 1999 1080p WEB-DL HDR10\+ HEVC\n/);
-  assert.match(item.title,/rutracker.*8.0 GiB.*0 peers.*WEB-DL.*HDR10\+.*HEVC/);
+  assert.match(item.title,/rutracker.*WEB-DL.*HDR10\+.*HEVC.*8.0 GiB.*0 peers/);
   assert.ok(!Object.hasOwn(item, 'size'), 'Nuvio must use release title rather than size for description');
 });
 test('peers are reported as peers without guessing a leecher count', async () => {
@@ -455,7 +455,7 @@ test('Android TV, webOS and Tizen use the same platform-independent provider API
 test('result labels use universally available characters', async () => {
   const result = await run([pack([sample()])]);
   assert.equal(result.found.length, 1);
-  assert.ok(result.found[0].name.startsWith('JacRed'));
+  assert.ok(result.found[0].name.startsWith('1080p')); // provider appears in the host badge
   assert.ok(!/[\uD835][\uDC00-\uDFFF]/.test(result.found[0].name));
 });
 
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.9$/);
+  assert.match(pkg.version,/^0\.0\.10$/);
 });
 
 
@@ -918,4 +918,36 @@ test('conflicting resolution tokens never claim a verified playback resolution',
     const x = await run([pack([sample(title)])]);
     assert.equal(x.found[0].quality, expected, title);
   }
+});
+
+
+test('Samsung photo: verbose Heist release is projected to three readable lines without changing its magnet', async () => {
+  const title = '\u0413\u0440\u0430\u0431\u0435\u0436 / Heist (\u0414\u044d\u0432\u0438\u0434 \u041c\u044d\u043c\u0435\u0442 / David Mamet) [2001, \u041a\u0430\u043d\u0430\u0434\u0430, \u0421\u0428\u0410, \u0431\u043e\u0435\u0432\u0438\u043a, \u0442\u0440\u0438\u043b\u043b\u0435\u0440, \u0434\u0440\u0430\u043c\u0430, \u043a\u0440\u0438\u043c\u0438\u043d\u0430\u043b, BDRemux 1080p] 2x MVO (DDV + \u041a\u0430\u0440\u0443\u0441\u0435\u043b\u044c) + DVO (Premier Digital) + AVO (\u042e\u0440\u0438\u0439 \u0416\u0438\u0432\u043e\u0432) + VO + Sub (Rus, Eng) + Original Eng';
+  const tracker = 'http://bt2.t-ru.org/ann?magnet';
+  const hash = '28d71b608d3d8d7004b273bbd0930eae34e892e5';
+  const row = sample(title,hash,8,{
+    MagnetUri: 'magnet:?xt=urn:btih:' + hash + '&tr=' + encodeURIComponent(tracker),
+    Tracker:'rutracker', Peers:2, Size:28561532518,
+    languages:['ru'], info:{voices:['\u0416\u0438\u0432\u043e\u0432','\u041a\u0430\u0440\u0443\u0441\u0435\u043b\u044c']}
+  });
+  const result = await run([pack([row])]);
+  assert.equal(result.found.length,1);
+  const stream = result.found[0];
+  assert.match(stream.name,/^1080p.*8 seeds/);
+  assert.deepEqual(stream.title.split('\n'),[
+    '\u0413\u0440\u0430\u0431\u0435\u0436 / Heist (2001)',
+    'rutracker \u00b7 BDRemux \u00b7 26.6 GiB \u00b7 2 peers',
+    'Languages: RU \u00b7 Voice: \u0416\u0438\u0432\u043e\u0432 / \u041a\u0430\u0440\u0443\u0441\u0435\u043b\u044c'
+  ]);
+  assert.equal(stream.infoHash,hash);
+  assert.equal(stream.url,'magnet:?xt=urn:btih:' + hash + '&tr=' + encodeURIComponent(tracker));
+  assert.ok(!stream.title.includes('\u0431\u043e\u0435\u0432\u0438\u043a'));
+  assert.ok(!stream.title.includes('\u0414\u044d\u0432\u0438\u0434 \u041c\u044d\u043c\u0435\u0442'));
+});
+
+test('compact card retains uncommon release labels and does not invent a year', async () => {
+  const title = 'The Matrix 1999 1080p WEB-DL HDR10+ HEVC';
+  const result = await run([pack([sample(title)])]);
+  assert.equal(result.found[0].title.split('\n')[0],title);
+  assert.match(result.found[0].title, /WEB-DL/);
 });

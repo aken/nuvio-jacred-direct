@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.9
+/* JacRed Direct for Nuvio - 0.0.10
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -236,6 +236,29 @@
     });
     return result;
   }
+  function shortReleaseLabel(title, metadata) {
+    // A common JacRed heading contains a verbose [year, countries, genres,
+    // technical details] block. Those details are rendered separately.
+    // Preserve all original source data for validation before calling this.
+    var label = title;
+    var bracket = /\s+\[(?:19|20)\d{2}(?:[,;\s\]])/.exec(label);
+    if (bracket) label = label.slice(0, bracket.index).trim();
+    // Some trackers put the director's bilingual credit between the title
+    // and the catalogue block. It is not a release/encoding distinction.
+    if (bracket) label = label.replace(/\s+\([^()]{8,}\s+\/\s+[^()]{5,}\)$/, '').trim();
+    if (label.length > 96) {
+      // Avoid cutting inside a surrogate pair, even with a malformed source.
+      label = label.slice(0, 93).replace(/[\uD800-\uDBFF]$/, '').trimEnd() + '...';
+    }
+    var year = metadata && metadata.year;
+    if ((!Number.isInteger(year) || year < 1900 || year > 2100) && bracket) {
+      var found = /\[(19|20)\d{2}/.exec(bracket[0]);
+      year = found ? Number(found[0].slice(1)) : 0;
+    }
+    if (year >= 1900 && year <= 2100 && !new RegExp('(?:^|[^0-9])' + year + '(?![0-9])').test(label))
+      label += ' (' + year + ')';
+    return label;
+  }
   function sizeText(size) {
     var bytes = Number(size);
     if (!Number.isFinite(bytes) || bytes <= 0) return '';
@@ -280,7 +303,10 @@
     var t = title.replace(/_/g, ' ');
     var tags = [];
     var format = t.match(/\b(?:WEB-DL|WEBRip|BDRemux|BDRip|HDRip|DVDRip)\b/i);
-    if (format) tags.push(format[0].toUpperCase());
+    if (format) {
+      var formats = { 'web-dl':'WEB-DL', webrip:'WEBRip', bdremux:'BDRemux', bdrip:'BDRip', hdrip:'HDRip', dvdrip:'DVDRip' };
+      tags.push(formats[format[0].toLowerCase()]);
+    }
     var modern = /(?:2160|4[k\u043a]|UHD|HEVC|H[ .-]?265|x265)/i.test(t);
     if (/\b(?:DoVi|Dolby[ .-]?Vision)\b/i.test(t) ||
        (/\bDV\b/i.test(t) && modern && !/\.avi(?:\b|$)/i.test(t))) tags.push('DV');
@@ -546,14 +572,15 @@
     var sz = sizeText(row.Size);
     var tracker = clean(row.Tracker, 35) || 'Unknown tracker';
     var availability = seeds < 0 ? 'Seeders unknown' : seeds + (seeds === 1 ? ' seed' : ' seeds');
-    var details = [tracker, sz];
     var peers = peersCount(row);
+    // Keep the main row short enough for a TV. The original full torrent
+    // title is used above for media/episode/quality validation, not discarded.
+    var technical = [tracker].concat(releaseTags(title), [sz]);
     // JacRed reports Peers, not a guaranteed leecher-only count.
-    if (peers >= 0) details.push(peers + (peers === 1 ? ' peer' : ' peers'));
-    details = details.concat(releaseTags(title), sourceAudioDetails(row));
-    // Nuvio maps a supplied `size` field into stream.description and hides
-    // stream.title on its source cards. Keep size inside title instead.
-    var display = title + '\n' + details.filter(Boolean).join(' \u00b7 ');
+    if (peers >= 0) technical.push(peers + (peers === 1 ? ' peer' : ' peers'));
+    var audio = sourceAudioDetails(row);
+    var display = shortReleaseLabel(title, metadata) + '\n' + technical.filter(Boolean).join(' \u00b7 ');
+    if (audio.length) display += '\n' + audio.join(' \u00b7 ');
     if (pack) display += '\nEpisode selection not verified';
     var trackers = magnetTrackers(magnet);
     return {
@@ -561,7 +588,7 @@
       trackers: trackers,
       infoHash: hash,
       title: display,
-      name: 'JacRed \u00b7 ' + q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Season pack' : ''),
+      name: q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Season pack' : ''),
       quality: q,
       seeders: seeds,
       qualityRank: qualityRank(q),
