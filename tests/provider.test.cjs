@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.5');
+  assert.equal(manifest.version, '0.0.6');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,5 +604,81 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.5$/);
+  assert.match(pkg.version,/^0\.0\.6$/);
+});
+
+
+test('accepts public IPv6 tracker URLs while preserving BTIH and peer discovery', async () => {
+  const trackers = [
+    'udp://[2606:4700:4700::1111]:6969/announce',
+    'https://[2a00:1450:4001:801::200e]/announce',
+    'http://[2001:4860:4860:0:0:0:0:8888]:8080/announce'
+  ];
+  const magnet = 'magnet:?xt=urn:btih:' + HASH_A + trackers.map(t => '&tr=' + encodeURIComponent(t)).join('');
+  const result = await run([pack([sample('Movie', HASH_A, 12, { MagnetUri: magnet })])]);
+  assert.equal(result.found.length, 1);
+  assert.equal(result.found[0].infoHash, HASH_A);
+  const actual = new URLSearchParams(result.found[0].url.slice('magnet:?'.length)).getAll('tr');
+  assert.deepEqual(actual, trackers);
+});
+
+test('rejects local, documentation, malformed and ambiguous IPv6 tracker destinations', async () => {
+  const blocked = [
+    'udp://[::1]:6969/announce', 'https://[::]/announce',
+    'udp://[fe80::1]:6969/announce', 'udp://[fd00::1234]:6969/announce',
+    'udp://[ff02::1]:6969/announce', 'udp://[2001:db8::5]:6969/announce',
+    'udp://[2001:db8:0:0:0:0:0:5]:6969/announce',
+    'udp://[2001:4860::abcd::1]:6969/announce',
+    'udp://[2001:4860:0:0:0:0:0:1:2]:6969/announce',
+    'udp://[2001:4860:0:0:0:0:0]:6969/announce',
+    'udp://2001:4860::1:6969/announce',
+    'udp://[::ffff:8.8.8.8]:6969/announce',
+    'udp://[2001:4860::1%25eth0]:6969/announce',
+    'udp://[2606:4700::1]:0/announce',
+    'udp://[2606:4700::1]:65536/announce',
+    'udp://[2606:4700::1]:abc/announce',
+    'udp://[2606:4700::1]junk/announce',
+    'udp://[2606:4700::1]:6969/announce?token=secret'
+  ];
+  const good = 'udp://[2606:4700:4700::1111]:6969/announce';
+  const rows = blocked.map((tracker, i) =>
+    sample('Movie ' + i, HASH_A, i, {
+      MagnetUri: 'magnet:?xt=urn:btih:' + HASH_A + '&tr=' + encodeURIComponent(tracker)
+    })
+  );
+  rows.push(sample('Movie public', HASH_A, 44, {
+    MagnetUri: 'magnet:?xt=urn:btih:' + HASH_A + '&tr=' + encodeURIComponent(good)
+  }));
+  const result = await run([pack(rows)]);
+  assert.equal(result.found.length, 1);
+  assert.deepEqual(new URLSearchParams(result.found[0].url.slice(8)).getAll('tr'), [good]);
+});
+
+test('merges IPv6 and IPv4/DNS trackers for duplicate release hashes', async () => {
+  const v6 = 'udp://[2606:4700:4700::1111]:6969/announce';
+  const dns = 'udp://tracker.example.org:6969/announce';
+  const rows = [
+    sample('Movie 1080p', HASH_A, 7, { MagnetUri: 'magnet:?xt=urn:btih:' + HASH_A + '&tr=' + encodeURIComponent(v6) }),
+    sample('Movie 2160p', HASH_A, 10, { MagnetUri: 'magnet:?xt=urn:btih:' + HASH_A + '&tr=' + encodeURIComponent(dns) })
+  ];
+  const result = await run([pack(rows)]);
+  assert.equal(result.found.length, 1);
+  assert.equal(result.found[0].quality, '2160p');
+  assert.deepEqual(new URLSearchParams(result.found[0].url.slice(8)).getAll('tr'), [v6, dns]);
+});
+
+
+test('JacRed upstream Jackett response schema is parsed without invented fields', async () => {
+  // From JacRed Application/Search/JackettResultBuilder.cs; synthetic values,
+  // not a snapshot of live API traffic.
+  const payload = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/jacred-jackett-schema.json'), 'utf8'));
+  const x = await run([movieMeta, { data: { Results: payload.Results } }], '603', 'movie', null, null, { tmdbKey: 'KEY' });
+  assert.equal(x.found.length, 1, 'release year should exclude the 2015 unrelated edition');
+  assert.equal(x.found[0].infoHash, HASH_A);
+  assert.match(x.found[0].title, /Languages: RU\/EN/);
+  assert.match(x.found[0].title, /Voice: LostFilm/);
+  assert.match(x.found[0].title, /9 peers/);
+  assert.equal(new URLSearchParams(x.found[0].url.slice(8)).getAll('tr')[0],
+    'udp://[2606:4700:4700::1111]:6969/announce');
+  assert.equal(query(x.calls[1]).searchParams.get('title_original'), 'The Matrix');
 });

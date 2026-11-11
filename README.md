@@ -32,7 +32,7 @@ The repository manifest does not impose a platform restriction. It does **not** 
 
 ## API keys
 
-**No API key is needed to use the public `jacred.su` endpoint.** Install the repository and enable the provider. There is no key to request, enter, or commit to GitHub.
+The plugin uses the public `jacred.su` endpoint without an API key. Install the repository and enable the provider. There is no credential field and no personal key is stored. If the public instance begins requiring authentication, this release will report no sources instead of exposing a key.
 
 Nuvio supplies its own TMDB API key to the plugin for metadata lookup. The plugin does not require you to configure a separate TMDB key.
 
@@ -44,7 +44,7 @@ The plugin searches JacRed using movie or series metadata from TMDB, validates B
 
 For TV episodes, it checks the season and episode numbers where they can be identified. Results that may contain more than one episode are labelled **Episode selection not verified**. Nuvio's torrent engine still has to select the correct file; the plugin cannot guarantee that choice.
 
-Source titles may be localized. The parser recognizes common season and episode formats, including localized labels, multi-season ranges, and comma-separated episode lists. Ambiguous packs remain labelled rather than being presented as exact-file matches. The code accepts both 40-character hexadecimal and 32-character base32 BitTorrent v1 info hashes and emits a canonical BTIH magnet for Nuvio. Only supported public tracker URLs are retained; malformed, reserved-network and obviously credential-bearing tracker URLs are dropped. Torrent v2-only links and direct `.torrent` downloads are not supported.
+Source titles may be localized. The parser recognizes common season and episode formats, including localized labels, multi-season ranges, and comma-separated episode lists. Ambiguous packs remain labelled rather than being presented as exact-file matches. The code accepts both 40-character hexadecimal and 32-character base32 BitTorrent v1 info hashes and emits a canonical BTIH magnet for Nuvio. Supported public IPv4, DNS and bracketed IPv6 tracker URLs are retained; malformed, reserved-network and obviously credential-bearing tracker URLs are dropped. IPv6 tracker support does not guarantee that the device or its network has IPv6 connectivity. Torrent v2-only links and direct `.torrent` downloads are not supported.
 
 Seeder and peer counts are provided by JacRed and may be incomplete or outdated. A minimum-seeder filter excludes releases with unknown counts rather than treating them as verified. A magnet is a lead, not a promise that a stream will play.
 
@@ -66,6 +66,24 @@ If there are no sources, check that the provider is enabled and the local plugin
 
 For intermittent failures, capture the Nuvio version, plugin test diagnostics, media type, TMDB ID, HTTP status (if shown), and whether the source was listed but not playable. These details help distinguish JacRed lookup errors from host runtime limits and playback engine failures. Do not share API keys or private tracker credentials.
 
+## Samsung playback checks
+
+A JavaScript provider can supply a magnet and an info hash, but Nuvio's native
+plugin adapter does not carry a verified file index. Do not assume that a season
+pack points to the requested episode. To validate playback without other devices:
+
+1. Refresh the repository and verify the provider version.
+2. Test a known single-file source. Separately confirm that playback starts.
+3. Test two distinct episodes from the same multi-file release you have rights to
+   access. Compare the actual video with the selected episode; check the
+   displayed filename if Nuvio exposes it.
+4. If a different episode plays, avoid that pack. Record the Nuvio build,
+   requested season/episode and release label for diagnosis. Do not share
+   private tracker credentials or personal API keys.
+
+This procedure cannot certify an arbitrary multi-file release and cannot be
+replaced by a unit test of the provider.
+
 ## Development
 
 Requires Node.js 20 or later. Run:
@@ -74,7 +92,17 @@ Requires Node.js 20 or later. Run:
 npm run verify
 ```
 
-The test suite checks API error handling, metadata searches, input validation, torrent hashes, duplicate results, episode matching, multi-episode warnings, result limits and Nuvio's expected output shape. GitHub Actions runs the same checks on each push and pull request.
+To check the *live* public JacRed response from a network that can reach the
+service, run `npm run smoke:live`. The command makes a read-only metadata query,
+never downloads video, does not send an API key, limits response size to 1 MiB,
+and fails on unexpected HTTP/JSON. It is deliberately not part of CI.
+
+The repository includes a synthetic JSON fixture derived from the field
+structure in JacRed's `JackettResultBuilder.Build`. It is not a recording of a
+live response. The live endpoint was inaccessible from the test environment
+when this release was prepared, so no successful live API response is claimed.
+
+The test suite checks API error handling, metadata searches, input validation, torrent hashes, IPv6 tracker validation, duplicate results, episode matching, multi-episode warnings, result limits and Nuvio's expected output shape. GitHub Actions runs the same checks on each push and pull request.
 
 Automated tests use simulated API responses. **A user has confirmed successful source discovery and some playback on Samsung Tizen; complete TV regression testing, all torrent formats, and playback on webOS and Android remain unverified.** To validate on each platform, install the plugin, search for a movie, confirm playback, then test two different episodes from the same multi-file release and check which file the torrent engine selected.
 

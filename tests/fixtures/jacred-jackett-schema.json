@@ -1,0 +1,61 @@
+{
+  "_fixture": "Synthetic payload conforming to JacRed JackettResultBuilder.Build output, not a captured live response",
+  "Results": [
+    {
+      "Tracker": "rutracker",
+      "Details": "https://rutracker.org/forum/viewtopic.php?t=123456",
+      "Title": "\u041c\u0430\u0442\u0440\u0438\u0446\u0430 / The Matrix (1999) BDRip 1080p",
+      "Size": 8589934592,
+      "PublishDate": "2026-01-03T00:00:00Z",
+      "Category": [
+        2000
+      ],
+      "CategoryDesc": "Movies/HD",
+      "Seeders": 37,
+      "Peers": 9,
+      "MagnetUri": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=udp%3A%2F%2F%5B2606%3A4700%3A4700%3A%3A1111%5D%3A6969%2Fannounce",
+      "ffprobe": null,
+      "languages": [
+        "rus",
+        "eng"
+      ],
+      "info": {
+        "name": "\u041c\u0430\u0442\u0440\u0438\u0446\u0430",
+        "originalname": "The Matrix",
+        "sizeName": "8 GiB",
+        "relased": 1999,
+        "videotype": "BDRip",
+        "quality": "1080p",
+        "voices": [
+          "LostFilm"
+        ],
+        "seasons": null,
+        "types": [
+          "movie"
+        ]
+      }
+    },
+    {
+      "Tracker": "kinozal",
+      "Details": "https://kinozal.tv/details.php?id=42",
+      "Title": "The Matrix (2015) BDRip 720p",
+      "Size": 6442450944,
+      "Seeders": 15,
+      "Peers": 0,
+      "MagnetUri": "magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01",
+      "languages": [
+        "rus"
+      ],
+      "info": {
+        "name": "The Matrix",
+        "originalname": "The Matrix",
+        "relased": 2015,
+        "voices": [],
+        "seasons": null,
+        "types": [
+          "movie"
+        ]
+      }
+    }
+  ]
+}

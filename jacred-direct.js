@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.5
+/* JacRed Direct for Nuvio - 0.0.6
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -139,6 +139,31 @@
     }
     return values;
   }
+  // Parse address literals without relying on browser URL or DNS APIs in QuickJS.
+  // Only publicly routable IPv6 unicast is retained. Private, link-local,
+  // loopback, multicast and documentation addresses are not tracker endpoints.
+  function globalIpv6(value) {
+    if (!/^[0-9a-f:]+$/i.test(value)) return false;
+    var double = value.indexOf('::');
+    if (double !== -1 && value.indexOf('::', double + 2) !== -1) return false;
+    var groups;
+    if (double === -1) {
+      groups = value.split(':');
+      if (groups.length !== 8) return false;
+    } else {
+      var left = value.slice(0, double);
+      var right = value.slice(double + 2);
+      var before = left ? left.split(':') : [];
+      var after = right ? right.split(':') : [];
+      if (before.length + after.length >= 8) return false;
+      groups = before.concat(Array(8 - before.length - after.length).fill('0'), after);
+    }
+    if (groups.length !== 8 || groups.some(function (group) { return !/^[0-9a-f]{1,4}$/i.test(group); })) return false;
+    var a = parseInt(groups[0], 16), b = parseInt(groups[1], 16);
+    if (a < 0x2000 || a >= 0x4000) return false;
+    if (a === 0x2001 && b === 0x0db8) return false;
+    return true;
+  }
   function safeTracker(value) {
     if (typeof value !== 'string' || value.length > MAX_TRACKER_LENGTH || /[\u0000-\u0020\u007f]/.test(value)) return false;
     var match = /^(https?|udp):\/\/([^\/?#]+)(?:[\/?#]|$)/i.exec(value);
@@ -146,6 +171,16 @@
     var authority = match[2];
     if (authority.indexOf('@') !== -1 || authority.indexOf('\\') !== -1) return false;
     // Keep local/private network addresses and hostnames out of public trackers.
+    // IPv6 authorities must be bracketed: [2001:4860::1]:6969.
+    // Never accept ambiguous unbracketed forms or IPv4-mapped literals.
+    if (authority.charAt(0) === '[') {
+      var literal = /^\[([0-9a-f:]+)\](?::(\d{1,5}))?$/i.exec(authority);
+      if (!literal || !globalIpv6(literal[1]) ||
+          (literal[2] && (Number(literal[2]) < 1 || Number(literal[2]) > 65535))) return false;
+      var rawQuery = value;
+      try { rawQuery = decodeURIComponent(value); } catch (_) {}
+      return !/[?&](?:passkey|authkey|auth|token|api_?key|password|secret|session|pass)=/i.test(rawQuery);
+    }
     var portMatch = /:(\d{1,5})$/.exec(authority);
     if (portMatch && (Number(portMatch[1]) < 1 || Number(portMatch[1]) > 65535)) return false;
     var host = authority.toLowerCase().replace(/:\d{1,5}$/, '');
