@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.10
+/* JacRed Direct for Nuvio - 0.0.11
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -316,23 +316,37 @@
     return tags;
   }
   function sourceAudioDetails(row) {
-    var details = [];
-    var langs = [], seen = Object.create(null);
+    // Keep the entire audio summary to one reasonably short TV-card line.
+    // Language codes and voices are displayed only when explicitly reported.
+    var langs = [], langSeen = Object.create(null);
     var languageMap = { ru: 'RU', rus: 'RU', russian: 'RU', en: 'EN', eng: 'EN', english: 'EN', uk: 'UKR', ukr: 'UKR', ukrainian: 'UKR', de: 'DE', deu: 'DE', german: 'DE', fr: 'FR', fra: 'FR', french: 'FR', ja: 'JA', jpn: 'JA', japanese: 'JA' };
     var items = Array.isArray(row.languages) ? row.languages : [];
     for (var i = 0; i < items.length && i < 20 && langs.length < 3; i++) {
       var code = languageMap[text(items[i]).toLowerCase()];
-      if (code && !seen[code]) { seen[code] = true; langs.push(code); }
+      if (code && !langSeen[code]) { langSeen[code] = true; langs.push(code); }
     }
-    if (langs.length) details.push('Languages: ' + langs.join('/'));
+    var prefix = langs.length ? langs.join('/') : '';
     var voices = row.info && Array.isArray(row.info.voices) ? row.info.voices : [];
     var labels = [], voiceSeen = Object.create(null);
-    for (var j = 0; j < voices.length && j < 20 && labels.length < 2; j++) {
-      var label = clean(voices[j], 36);
-      if (label && !voiceSeen[label.toLowerCase()]) { labels.push(label); voiceSeen[label.toLowerCase()] = true; }
+    for (var j = 0; j < voices.length && j < 100; j++) {
+      var label = clean(voices[j], 100);
+      var key = label.toLowerCase();
+      if (label && !voiceSeen[key]) { labels.push(label); voiceSeen[key] = true; }
     }
-    if (labels.length) details.push('Voice: ' + labels.join(' / '));
-    return details;
+    if (!labels.length) return prefix;
+    var header = (prefix ? prefix + ' \u00b7 ' : '') + 'Voices: ';
+    var chosen = [];
+    for (var k = 0; k < labels.length && chosen.length < 4; k++) {
+      var candidate = labels[k].length > 28 ? labels[k].slice(0, 27).trim() + '\u2026' : labels[k];
+      var rest = labels.length - k - 1;
+      var suffix = voices.length > 100 ? ' +more' : (rest ? ' +' + rest : '');
+      var attempt = header + chosen.concat(candidate).join(' / ') + suffix;
+      if (attempt.length > 72) break;
+      chosen.push(candidate);
+    }
+    var omitted = labels.length - chosen.length;
+    // A first name can never be larger than the budget after shortening.
+    return header + chosen.join(' / ') + (voices.length > 100 ? ' +more' : (omitted ? ' +' + omitted : ''));
   }
   function normalizedWords(value) {
     return clean(value, MAX_TITLE_LENGTH).toLowerCase()
@@ -580,7 +594,7 @@
     if (peers >= 0) technical.push(peers + (peers === 1 ? ' peer' : ' peers'));
     var audio = sourceAudioDetails(row);
     var display = shortReleaseLabel(title, metadata) + '\n' + technical.filter(Boolean).join(' \u00b7 ');
-    if (audio.length) display += '\n' + audio.join(' \u00b7 ');
+    if (audio) display += '\n' + audio;
     if (pack) display += '\nEpisode selection not verified';
     var trackers = magnetTrackers(magnet);
     return {

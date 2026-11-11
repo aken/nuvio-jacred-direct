@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.10');
+  assert.equal(manifest.version, '0.0.11');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -418,8 +418,8 @@ test('release matching rejects unrelated results before deciding whether to fall
 test('source cards include only explicitly reported language and voice metadata', async () => {
   const row=sample('The Matrix 1999 1080p',HASH_A,7,{languages:['ru','en','ru','xx'],info:{voices:['LostFilm','NewStudio','LostFilm']}});
   const x=await run([pack([row])]);
-  assert.match(x.found[0].title,/Languages: RU\/EN/);
-  assert.match(x.found[0].title,/Voice: LostFilm \/ NewStudio/);
+  assert.match(x.found[0].title,/RU\/EN \u00b7 Voices: LostFilm \/ NewStudio/);
+  assert.ok(!x.found[0].title.includes('Languages:'));
   assert.ok(!x.found[0].title.includes('xx'));
 });
 test('tracker names do not imply an audio language', async () => {
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.10$/);
+  assert.match(pkg.version,/^0\.0\.11$/);
 });
 
 
@@ -675,8 +675,8 @@ test('JacRed upstream Jackett response schema is parsed without invented fields'
   const x = await run([movieMeta, { data: { Results: payload.Results } }], '603', 'movie', null, null, { tmdbKey: 'KEY' });
   assert.equal(x.found.length, 1, 'release year should exclude the 2015 unrelated edition');
   assert.equal(x.found[0].infoHash, HASH_A);
-  assert.match(x.found[0].title, /Languages: RU\/EN/);
-  assert.match(x.found[0].title, /Voice: LostFilm/);
+  assert.match(x.found[0].title, /RU\/EN \u00b7 Voices: LostFilm/);
+  assert.ok(!x.found[0].title.includes('Languages:'));
   assert.match(x.found[0].title, /9 peers/);
   assert.equal(new URLSearchParams(x.found[0].url.slice(8)).getAll('tr')[0],
     'udp://[2606:4700:4700::1111]:6969/announce');
@@ -937,7 +937,7 @@ test('Samsung photo: verbose Heist release is projected to three readable lines 
   assert.deepEqual(stream.title.split('\n'),[
     '\u0413\u0440\u0430\u0431\u0435\u0436 / Heist (2001)',
     'rutracker \u00b7 BDRemux \u00b7 26.6 GiB \u00b7 2 peers',
-    'Languages: RU \u00b7 Voice: \u0416\u0438\u0432\u043e\u0432 / \u041a\u0430\u0440\u0443\u0441\u0435\u043b\u044c'
+    'RU \u00b7 Voices: \u0416\u0438\u0432\u043e\u0432 / \u041a\u0430\u0440\u0443\u0441\u0435\u043b\u044c'
   ]);
   assert.equal(stream.infoHash,hash);
   assert.equal(stream.url,'magnet:?xt=urn:btih:' + hash + '&tr=' + encodeURIComponent(tracker));
@@ -950,4 +950,53 @@ test('compact card retains uncommon release labels and does not invent a year', 
   const result = await run([pack([sample(title)])]);
   assert.equal(result.found[0].title.split('\n')[0],title);
   assert.match(result.found[0].title, /WEB-DL/);
+});
+
+
+test('voice list is compact, preserves order, and signals hidden alternatives', async () => {
+  const names = ['\u0416\u0438\u0432\u043e\u0432', '\u041a\u0430\u0440\u0443\u0441\u0435\u043b\u044c', 'Premier Digital', 'LostFilm', 'NewStudio', '\u041a\u0443\u0431\u0438\u043a'];
+  const row = sample('Heist 2001 1080p', HASH_A, 8, {
+    languages: ['ru', 'eng', 'rus'], info: { voices: names }
+  });
+  const result = await run([pack([row])]);
+  const lines = result.found[0].title.split('\n');
+  assert.equal(lines.length, 3, 'voice metadata should not consume extra display lines');
+  assert.equal(lines[2], 'RU/EN \u00b7 Voices: \u0416\u0438\u0432\u043e\u0432 / \u041a\u0430\u0440\u0443\u0441\u0435\u043b\u044c / Premier Digital / LostFilm +2');
+  assert.ok(lines[2].length <= 72);
+  assert.ok(!lines[2].includes('Languages:'));
+  assert.deepEqual(row.info.voices, names, 'do not mutate upstream data');
+});
+test('voice summary adapts to long labels and stays under the TV text budget', async () => {
+  const voices = ['A'.repeat(75), 'B'.repeat(75), 'C'.repeat(75), 'D'.repeat(75)];
+  const row = sample('Heist 2001 1080p', HASH_A, 8, {
+    languages:['ru','en','de'], info:{ voices }
+  });
+  const result = await run([pack([row])]);
+  const audio = result.found[0].title.split('\n')[2];
+  assert.ok(audio.length <= 72, audio);
+  assert.match(audio, /^RU\/EN\/DE \u00b7 Voices: A+\u2026/);
+  assert.match(audio, /\+\d+$/);
+  assert.ok(!audio.includes(voices[0]));
+});
+test('voice summary deduplicates safely and omits empty language labels', async () => {
+  const row = sample('Film 1080p', HASH_A, 8, {
+    languages: ['invalid'], info: { voices: ['LostFilm', 'lostfilm', ' ', null, 456, 'NewStudio'] }
+  });
+  const result = await run([pack([row])]);
+  const audio = result.found[0].title.split('\n')[2];
+  assert.equal(audio, 'Voices: LostFilm / NewStudio');
+});
+test('language-only and voice-free cards never show empty voice labels', async () => {
+  const a = await run([pack([sample('Film 1080p', HASH_A, 8, { languages:['rus','eng'], info: {voices: []} })])]);
+  assert.equal(a.found[0].title.split('\n')[2], 'RU/EN');
+  const b = await run([pack([sample('Film 1080p', HASH_A, 8, { languages:['unknown'], info: {voices: []} })])]);
+  assert.equal(b.found[0].title.split('\n').length, 2);
+});
+test('extreme voice arrays are bounded and cannot overwhelm stream cards', async () => {
+  const voices = Array.from({ length: 180 }, (_, i) => 'Voice ' + i);
+  const result = await run([pack([sample('Film 1080p',HASH_A,3,{languages:['ru'],info:{voices}})])]);
+  const audio = result.found[0].title.split('\n')[2];
+  assert.ok(audio.length <= 72, audio);
+  assert.match(audio, /\+more$/);
+  assert.ok(audio.startsWith('RU \u00b7 Voices: Voice 0 / Voice 1'));
 });
