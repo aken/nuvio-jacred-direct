@@ -48,6 +48,14 @@ Source titles may be localized. The parser recognizes common season and episode 
 
 Seeder and peer counts are provided by JacRed and may be incomplete or outdated. A minimum-seeder filter excludes releases with unknown counts rather than treating them as verified. A magnet is a lead, not a promise that a stream will play.
 
+## Episode parsing reliability
+
+Season-and-episode labels in release titles are hints, not a file index. Named
+intervals such as `Season 1: Episodes 1-3` are matched only to those episodes,
+not every episode in the season. A matching multi-episode result still shows
+`Episode selection not verified`, because Nuvio does not expose the selected
+file index through this provider contract.
+
 ## Limitations
 
 - This is a **Nuvio JavaScript provider**, not a Stremio addon. Use the **Plugins** screen, not **Addons**.
@@ -115,4 +123,3 @@ Distributed under the [MIT License](LICENSE). Only access and share content that
 - [NuvioTVSmart](https://github.com/NuvioMedia/NuvioTVSmart) - Samsung Tizen and LG webOS runtimes.
 - [NuvioTV](https://github.com/NuvioMedia/NuvioTV) - Android plugin runtime and integrated torrent engine.
 - [JacRed](https://github.com/jacred-fdb/jacred) - Jackett-compatible API and torrent search.
-

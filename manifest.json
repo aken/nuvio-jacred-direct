@@ -1,13 +1,13 @@
 {
   "name": "JacRed Direct",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Search JacRed directly from Nuvio TV.",
   "author": "aken",
   "scrapers": [
     {
       "id": "jacred-direct",
       "name": "JacRed Direct",
-      "version": "0.0.6",
+      "version": "0.0.7",
       "filename": "jacred-direct.js",
       "description": "Find torrent sources for movies and TV episodes.",
       "supportedTypes": [

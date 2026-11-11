@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.6');
+  assert.equal(manifest.version, '0.0.7');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.6$/);
+  assert.match(pkg.version,/^0\.0\.7$/);
 });
 
 
@@ -681,4 +681,100 @@ test('JacRed upstream Jackett response schema is parsed without invented fields'
   assert.equal(new URLSearchParams(x.found[0].url.slice(8)).getAll('tr')[0],
     'udp://[2606:4700:4700::1111]:6969/announce');
   assert.equal(query(x.calls[1]).searchParams.get('title_original'), 'The Matrix');
+});
+
+// Regression: season-only packs must not override explicit episode intervals.
+test('named episode ranges exclude episodes outside the advertised interval', async () => {
+  for (const title of ['Show Season 1: Episodes 1-3', 'Show Season 1 Episodes 1-3',
+                       'Show \u0421\u0435\u0437\u043e\u043d 1 \u0421\u0435\u0440\u0438\u0438 1-3']) {
+    const yes = await run([pack([sample(title)])], '42', 'series', 1, 3);
+    assert.equal(yes.found.length, 1, title);
+    assert.match(yes.found[0].title, /Episode selection not verified/);
+    const no = await run([pack([sample(title)]),pack([sample(title)])], '42', 'series', 1, 99);
+    assert.equal(no.found.length, 0, title);
+  }
+});
+
+test('named episode lists distinguish nonconsecutive episodes', async () => {
+  const title='Show Season 1: Episodes 1,3,5';
+  for(const ep of [1,3,5]) {
+    const x=await run([pack([sample(title)])], '42', 'series', 1, ep);
+    assert.equal(x.found.length,1,String(ep));
+  }
+  for(const ep of [2,4,6]) {
+    const x=await run([pack([sample(title)]),pack([sample(title)])], '42', 'series', 1, ep);
+    assert.equal(x.found.length,0,String(ep));
+  }
+});
+
+test('named single episodes retain exact matching', async () => {
+  const x=await run([pack([sample('Show Season 1: Episode 7')])], '42', 'series', 1, 7);
+  assert.equal(x.found.length,1);
+  assert.ok(!x.found[0].name.includes('Season pack'));
+  const no=await run([pack([sample('Show Season 1: Episode 7')]),pack([])], '42', 'series', 1, 8);
+  assert.equal(no.found.length,0);
+});
+
+test('resolution requires proper numeric boundaries and supports refresh rates', async () => {
+  const x=await run([pack([sample('Film 21601080',HASH_A),
+    sample('Film 2160p60fps',HASH_B), sample('Film 1080p24',HASH_C)])]);
+  const r=new Map(x.found.map(y=>[y.infoHash,y.quality]));
+  assert.equal(r.get(HASH_A),'Unknown');
+  assert.equal(r.get(HASH_B),'2160p');
+  assert.equal(r.get(HASH_C),'1080p');
+});
+
+
+test('S01 EP02 notation does not accidentally select unrelated episodes', async () => {
+  const title = 'Show S01 EP02';
+  const yes=await run([pack([sample(title)])], '42','series',1,2);
+  assert.equal(yes.found.length,1);
+  assert.ok(!yes.found[0].name.includes('Season pack'));
+  const no=await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,99);
+  assert.equal(no.found.length,0);
+});
+
+test('S01 Episodes 1-3 is not treated as an unrestricted season pack', async () => {
+  const title='Show S01 Episodes 1-3';
+  assert.equal((await run([pack([sample(title)])], '42','series',1,2)).found.length,1);
+  assert.equal((await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,6)).found.length,0);
+});
+
+test('invalid reversed named episode ranges fail closed', async () => {
+  for(const title of ['Show Season 1 Episodes 3-1','Show Season 1 Episodes 1-200']) {
+    assert.equal((await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,3)).found.length,0,title);
+  }
+});
+
+
+test('colon-separated S01 and Episode markers do not match every episode', async () => {
+  for(const title of ['Show S01: E02-03','Show Season 1: E02-03']) {
+    assert.equal((await run([pack([sample(title)])], '42','series',1,3)).found.length,1,title);
+    assert.equal((await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,99)).found.length,0,title);
+  }
+});
+
+test('Russian season-before-suffix episode range is bounded', async () => {
+  const title='Show 1 \u0441\u0435\u0437\u043e\u043d 2-3 \u0441\u0435\u0440\u0438\u0438';
+  assert.equal((await run([pack([sample(title)])], '42','series',1,2)).found.length,1);
+  assert.equal((await run([pack([sample(title)])], '42','series',1,3)).found.length,1);
+  assert.equal((await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,4)).found.length,0);
+});
+
+
+test('Russian prefix-season suffix-episode notation is bounded', async () => {
+  const title='Show \u0421\u0435\u0437\u043e\u043d 1: 2-3 \u0441\u0435\u0440\u0438\u0438';
+  assert.equal((await run([pack([sample(title)])], '42','series',1,2)).found.length,1);
+  assert.equal((await run([pack([sample(title)])], '42','series',1,3)).found.length,1);
+  assert.equal((await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,99)).found.length,0);
+});
+
+test('episode-range boundaries hold across multiple intervals', async () => {
+  for (let start=1;start<=10;start++) {
+    for(let end=start;end<=Math.min(start+3,12);end++) {
+      const title='Show Season 1: Episodes '+start+'-'+end;
+      assert.equal((await run([pack([sample(title)])], '42','series',1,end)).found.length,1,title);
+      assert.equal((await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,end+1)).found.length,0,title);
+    }
+  }
 });

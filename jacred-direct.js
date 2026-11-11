@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.6
+/* JacRed Direct for Nuvio - 0.0.7
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -240,16 +240,20 @@
   }
   function quality(title) {
     var value = title.toLowerCase().replace(/_/g, ' ');
-    // Only explicit resolution evidence is sufficient. Do not infer it from size.
+    // Prefer explicit dimensions. A bare four-digit resolution label must end
+    // at a token boundary; 21601080 is not a 2160p label.
     var dimensions = /(?:^|[^0-9])(\d{3,4})\s*[x\u00d7]\s*(4320|2160|1440|1080|720|576|480)(?!\d)/i.exec(value);
     if (dimensions && Number(dimensions[1]) >= Number(dimensions[2]) && Number(dimensions[1]) <= Number(dimensions[2]) * 3)
       return Number(dimensions[2]) === 2160 ? '2160p' : dimensions[2] + 'p';
-    if (/(?:^|[^a-z\d\u0400-\u052f])(?:4320p?(?:\d{2,3})?|8[k\u043a])(?![a-z\u0400-\u052f])/i.test(value)) return '4320p';
-    if (/(?:^|[^a-z\d\u0400-\u052f])(?:2160p?(?:\d{2,3})?|4[k\u043a]|uhd)(?![a-z\u0400-\u052f])/i.test(value)) return '2160p';
-    if (/(?:^|[^a-z\d])1440p?(?:\d{2,3})?(?![a-z])/i.test(value)) return '1440p';
-    if (/(?:^|[^a-z\d])(?:1080p?(?:\d{2,3})?|fhd|full[ .-]?hd)(?![a-z])/i.test(value)) return '1080p';
-    if (/(?:^|[^a-z\d])720p?(?:\d{2,3})?(?![a-z])/i.test(value)) return '720p';
-    if (/(?:^|[^a-z\d])480p?(?:\d{2,3})?(?![a-z])/i.test(value)) return '480p';
+    var labels = [
+      ['4320p', /(?:^|[^a-z\d\u0400-\u052f])(?:4320(?:p(?:\d{2,3})?(?:fps|hz)?)?|8[k\u043a])(?![a-z\d\u0400-\u052f])/i],
+      ['2160p', /(?:^|[^a-z\d\u0400-\u052f])(?:2160(?:p(?:\d{2,3})?(?:fps|hz)?)?|4[k\u043a]|uhd)(?![a-z\d\u0400-\u052f])/i],
+      ['1440p', /(?:^|[^a-z\d])1440(?:p(?:\d{2,3})?(?:fps|hz)?)?(?![a-z\d])/i],
+      ['1080p', /(?:^|[^a-z\d])(?:1080(?:p(?:\d{2,3})?(?:fps|hz)?)?|fhd|full[ .-]?hd)(?![a-z\d])/i],
+      ['720p', /(?:^|[^a-z\d])720(?:p(?:\d{2,3})?(?:fps|hz)?)?(?![a-z\d])/i],
+      ['480p', /(?:^|[^a-z\d])480(?:p(?:\d{2,3})?(?:fps|hz)?)?(?![a-z\d])/i]
+    ];
+    for (var i = 0; i < labels.length; i++) if (labels[i][1].test(value)) return labels[i][0];
     return 'Unknown';
   }
   function qualityRank(q) { return q === '4320p' ? 6 : q === '2160p' ? 5 : q === '1440p' ? 4 : q === '1080p' ? 3 : q === '720p' ? 2 : q === '480p' ? 1 : 0; }
@@ -324,7 +328,7 @@
     // Use bounded title text to prevent excessive work on untrusted results.
     var t = clean(title, MAX_TITLE_LENGTH).replace(/[._]/g, ' ');
     var markers = [];
-    var season = /(?:^|[^a-z\d])s(?:eason\s*)?(\d{1,2})[\s-]*e(?:pisode\s*)?(\d{1,3})(?!\d)(?:\s*[-~]\s*e?(\d{1,3})(?!\d))?/gi;
+    var season = /(?:^|[^a-z\d])s(?:eason\s*)?(\d{1,2})[\s-]*e(?:p(?:isode)?)?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*e?(\d{1,3})(?!\d))?/gi;
     var numeric = /(?:^|[^\d])(\d{1,2})x(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?/gi;
     var ru = /(?:\u0441\u0435\u0437\u043e\u043d\s*(\d{1,2})\s*[,;:\- ]*\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u0439|\.)?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?)/gi;
     [season,numeric,ru].forEach(function (re) {
@@ -350,6 +354,46 @@
       for (var j = 0; j < values.length && markers.length < 40; j++)
         markers.push({ s: Number(m[1]), a: Number(values[j]), b: Number(values[j]) });
     }
+    // Named English/Russian episode lists, such as "Season 1: Episodes 1-3, 5".
+    // A specific episode range must take priority over a season-wide guess.
+    var named = /(?:^|[^a-z\d])(?:season|s|\u0441\u0435\u0437\u043e\u043d)\s*(\d{1,2})(?!\d)\s*[,;:.\-]?\s*(?:episodes?|eps?|e|\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u0439)?)\s*[:.]?\s*(\d{1,3})(?!\d)((?:\s*[-~,;&+]\s*(?:e(?:p)?)?\d{1,3}(?!\d)){0,10})/gi;
+    while ((m = named.exec(t)) !== null && markers.length < 40) {
+      var namedSeason = Number(m[1]), first = Number(m[2]);
+      if (first < 1 || first > 999) { markers.push({ s: namedSeason, a: 0, b: 0 }); continue; }
+      var last = first, items = [], token;
+      var suffix = /([-~,;&+])\s*(?:e(?:p)?)?(\d{1,3})(?!\d)/gi;
+      while ((token = suffix.exec(m[3])) !== null && items.length < 10) {
+        var next = Number(token[2]);
+        if (next < 1 || next > 999) continue;
+        if (token[1] === '-' || token[1] === '~') {
+          if (next < last || next - last >= 100) { items = []; last = -1; break; }
+          items.push({ s: namedSeason, a: last, b: next });
+        } else items.push({ s: namedSeason, a: next, b: next });
+        last = next;
+      }
+      if (last === -1) {
+        // An explicit but invalid interval must not become a season-wide match.
+        markers.push({ s: namedSeason, a: 0, b: 0 });
+      } else {
+        // Do not discard the initial number when subsequent entries exist.
+        markers.push({ s: namedSeason, a: first, b: first });
+        for (var k = 0; k < items.length && markers.length < 50; k++) markers.push(items[k]);
+      }
+    }
+    // Russian form with the season noun between season and episode numbers.
+    var suffixEpisodes = /(?:^|[^\d])(\d{1,2})(?!\d)\s+\u0441\u0435\u0437\u043e\u043d(?:\u0430)?\s*[,;:.\-]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?\s+\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)/gi;
+    while ((m = suffixEpisodes.exec(t)) !== null && markers.length < 50) {
+      var start = Number(m[2]), end = m[3] ? Number(m[3]) : start;
+      markers.push({ s: Number(m[1]), a: end >= start && end - start < 100 ? start : 0,
+        b: end >= start && end - start < 100 ? end : 0 });
+    }
+    // Russian form with the episode noun following the numbered interval.
+    var prefixEpisodes = /(?:^|[^a-z\d])\u0441\u0435\u0437\u043e\u043d\s*(\d{1,2})(?!\d)\s*[:;,.\-]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?\s+\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)/gi;
+    while ((m = prefixEpisodes.exec(t)) !== null && markers.length < 50) {
+      var prefixStart = Number(m[2]), prefixEnd = m[3] ? Number(m[3]) : prefixStart;
+      markers.push({ s: Number(m[1]), a: prefixEnd >= prefixStart && prefixEnd - prefixStart < 100 ? prefixStart : 0,
+        b: prefixEnd >= prefixStart && prefixEnd - prefixStart < 100 ? prefixEnd : 0 });
+    }
     return markers;
   }
   function seasonNumbers(title) {
@@ -373,7 +417,7 @@
       for (var i = 0; i < matches.length && i < 12; i++) add(matches[i]);
     }
     var m;
-    var shortSeason = /(?:^|[^a-z\d])s(\d{1,2})(?!\d|\s*e\d)(?:\s*[-~]\s*s?(\d{1,2})(?!\d|\s*e\d))?/gi;
+    var shortSeason = /(?:^|[^a-z\d])s(\d{1,2})(?!\d|\s*e(?:p(?:isode)?)?\s*\d)(?:\s*[-~]\s*s?(\d{1,2})(?!\d|\s*e(?:p(?:isode)?)?\s*\d))?/gi;
     while ((m = shortSeason.exec(t)) !== null) {
       if (m[2] !== undefined) range(m[1], m[2]);
       else add(m[1]);
