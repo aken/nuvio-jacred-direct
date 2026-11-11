@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.7
+/* JacRed Direct for Nuvio - 0.0.8
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -335,9 +335,11 @@
       var match;
       while ((match = re.exec(t)) !== null && markers.length < 30) {
         var a = Number(match[2]), b = match[3] ? Number(match[3]) : a;
-        if (a > 0 && b > 0 && a <= 999 && b <= 999 && Math.abs(a - b) < 100) {
-          markers.push({ s: Number(match[1]), a: Math.min(a,b), b: Math.max(a,b) });
-        }
+        // Do not turn reversed, overlong or zero-valued ranges into valid
+        // episode spans. A sentinel prevents a season-only fallback.
+        if (a >= 1 && b >= a && b <= 999 && b - a < 100)
+          markers.push({ s: Number(match[1]), a: a, b: b });
+        else markers.push({ s: Number(match[1]), a: 0, b: 0 });
       }
     });
     // S01E02E03 or S01E02-E03 are explicit multi-episode releases.
@@ -356,7 +358,7 @@
     }
     // Named English/Russian episode lists, such as "Season 1: Episodes 1-3, 5".
     // A specific episode range must take priority over a season-wide guess.
-    var named = /(?:^|[^a-z\d])(?:season|s|\u0441\u0435\u0437\u043e\u043d)\s*(\d{1,2})(?!\d)\s*[,;:.\-]?\s*(?:episodes?|eps?|e|\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u0439)?)\s*[:.]?\s*(\d{1,3})(?!\d)((?:\s*[-~,;&+]\s*(?:e(?:p)?)?\d{1,3}(?!\d)){0,10})/gi;
+    var named = /(?:^|[^a-z\d])(?:season|s|\u0441\u0435\u0437\u043e\u043d)\s*(\d{1,2})(?!\d)\s*[,;:.\-/]?\s*(?:episodes?|eps?|e|\u044d\u043f\u0438\u0437\u043e\u0434(?:\u044b|\u0430|\u043e\u0432)?|\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u0439)?)\s*[:.]?\s*(\d{1,3})(?!\d)((?:\s*[-~,;&+]\s*(?:e(?:p)?)?\d{1,3}(?!\d)){0,10})/gi;
     while ((m = named.exec(t)) !== null && markers.length < 40) {
       var namedSeason = Number(m[1]), first = Number(m[2]);
       if (first < 1 || first > 999) { markers.push({ s: namedSeason, a: 0, b: 0 }); continue; }
@@ -380,15 +382,30 @@
         for (var k = 0; k < items.length && markers.length < 50; k++) markers.push(items[k]);
       }
     }
+    // Russian postfix season with an episode label before its number.
+    // Never mistake an explicitly numbered episode for a whole-season pack.
+    var russianPostfix = /(?:^|[^\d])(\d{1,2})(?!\d)\s+\u0441\u0435\u0437\u043e\u043d(?:\u0430)?\s*[,;:.\-/]?\s*\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)\s*[:.]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?/gi;
+    while ((m = russianPostfix.exec(t)) !== null && markers.length < 50) {
+      var postStart = Number(m[2]), postEnd = m[3] ? Number(m[3]) : postStart;
+      markers.push({ s: Number(m[1]), a: postStart > 0 && postEnd >= postStart && postEnd - postStart < 100 ? postStart : 0,
+        b: postStart > 0 && postEnd >= postStart && postEnd - postStart < 100 ? postEnd : 0 });
+    }
+    // Compact Russian notation: S01 followed by an episode number and the episode word.
+    var shortRussian = /(?:^|[^a-z\d])s(\d{1,2})(?!\d)\s*[,;:.\-/ ]+\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?\s+\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)/gi;
+    while ((m = shortRussian.exec(t)) !== null && markers.length < 50) {
+      var shortStart = Number(m[2]), shortEnd = m[3] ? Number(m[3]) : shortStart;
+      markers.push({ s: Number(m[1]), a: shortStart > 0 && shortEnd >= shortStart && shortEnd - shortStart < 100 ? shortStart : 0,
+        b: shortStart > 0 && shortEnd >= shortStart && shortEnd - shortStart < 100 ? shortEnd : 0 });
+    }
     // Russian form with the season noun between season and episode numbers.
-    var suffixEpisodes = /(?:^|[^\d])(\d{1,2})(?!\d)\s+\u0441\u0435\u0437\u043e\u043d(?:\u0430)?\s*[,;:.\-]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?\s+\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)/gi;
+    var suffixEpisodes = /(?:^|[^\d])(\d{1,2})(?!\d)\s+\u0441\u0435\u0437\u043e\u043d(?:\u0430)?\s*[,;:.\-/]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?\s+\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)/gi;
     while ((m = suffixEpisodes.exec(t)) !== null && markers.length < 50) {
       var start = Number(m[2]), end = m[3] ? Number(m[3]) : start;
       markers.push({ s: Number(m[1]), a: end >= start && end - start < 100 ? start : 0,
         b: end >= start && end - start < 100 ? end : 0 });
     }
     // Russian form with the episode noun following the numbered interval.
-    var prefixEpisodes = /(?:^|[^a-z\d])\u0441\u0435\u0437\u043e\u043d\s*(\d{1,2})(?!\d)\s*[:;,.\-]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?\s+\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)/gi;
+    var prefixEpisodes = /(?:^|[^a-z\d])\u0441\u0435\u0437\u043e\u043d\s*(\d{1,2})(?!\d)\s*[:;,.\-/]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?\s+\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)/gi;
     while ((m = prefixEpisodes.exec(t)) !== null && markers.length < 50) {
       var prefixStart = Number(m[2]), prefixEnd = m[3] ? Number(m[3]) : prefixStart;
       markers.push({ s: Number(m[1]), a: prefixEnd >= prefixStart && prefixEnd - prefixStart < 100 ? prefixStart : 0,
@@ -439,6 +456,9 @@
   function seasonMatches(title, season, episode, row, conf) {
     var markers = parsedEpisodes(title);
     if (markers.length) {
+      // Never let another notation override an explicitly invalid interval.
+      if (markers.some(function (m) { return m.a === 0 && m.b === 0; }))
+        return { ok: false, pack: false };
       var matches = markers.some(function (m) { return m.s === season && episode >= m.a && episode <= m.b; });
       // An episode range or multiple distinct episode markers may represent
       // several files. Do not present its file selection as guaranteed.
@@ -448,6 +468,10 @@
     }
     var t = clean(title, MAX_TITLE_LENGTH).replace(/[._]/g, ' ');
     var explicit = seasonNumbers(title);
+    // Fail closed for unparsed numbered episode labels. Otherwise a title like
+    // "Season 1 / Episode 03" can silently become an unrestricted season pack.
+    var numberedEpisode = /(?:^|[^a-z])(?:episodes?|eps?|e)\s*[:.\-]?\s*\d+|(?:\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)|\u044d\u043f\u0438\u0437\u043e\u0434(?:\u044b|\u0430|\u043e\u0432)?)\s*[:.\-]?\s*\d+|\d+\s*\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)/i;
+    if (numberedEpisode.test(t)) return { ok: false, pack: false };
     // Standalone E05 without a season is not sufficient evidence.
     if (/(?:^|[^a-z\d])e(?:pisode\s*)?\d{1,3}/i.test(t) && !explicit.length) return {ok:false,pack:false};
     var infoSeasons = row.info && Array.isArray(row.info.seasons) ? row.info.seasons.map(Number).filter(Number.isSafeInteger) : [];

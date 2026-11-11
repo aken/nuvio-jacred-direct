@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.7');
+  assert.equal(manifest.version, '0.0.8');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.7$/);
+  assert.match(pkg.version,/^0\.0\.8$/);
 });
 
 
@@ -776,5 +776,73 @@ test('episode-range boundaries hold across multiple intervals', async () => {
       assert.equal((await run([pack([sample(title)])], '42','series',1,end)).found.length,1,title);
       assert.equal((await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,end+1)).found.length,0,title);
     }
+  }
+});
+
+// These checks reflect release naming styles seen in Russian tracker results.
+// A numbered episode is never the equivalent of an entire season pack.
+const explicitEpisodeCases = [
+  { title: 'Show 1 \u0441\u0435\u0437\u043e\u043d \u0441\u0435\u0440\u0438\u044f 2', season: 1, yes: [2], no: [1, 3, 5], pack: false },
+  { title: 'Show 1 \u0441\u0435\u0437\u043e\u043d, \u0441\u0435\u0440\u0438\u0438 3-5', season: 1, yes: [3, 4, 5], no: [1, 2, 6, 99], pack: true },
+  { title: 'Show \u0421\u0435\u0437\u043e\u043d 1 / \u0421\u0435\u0440\u0438\u044f 3', season: 1, yes: [3], no: [2, 4, 9], pack: false },
+  { title: 'Show Season 1/Episode 3', season: 1, yes: [3], no: [2, 4, 9], pack: false },
+  { title: 'Show S01 02 \u0441\u0435\u0440\u0438\u044f', season: 1, yes: [2], no: [1, 3, 8], pack: false },
+  { title: 'Show Season 1: Episodes 2-4', season: 1, yes: [2, 3, 4], no: [1, 5, 9], pack: true }
+];
+for (const item of explicitEpisodeCases) {
+  test('precise matching for '+item.title, async () => {
+    for (const e of item.yes) {
+      const r = await run([pack([sample(item.title)])], '42', 'series', item.season, e);
+      assert.equal(r.found.length, 1, item.title+' should match episode '+e);
+      assert.equal(/Episode selection not verified/.test(r.found[0].title), item.pack);
+    }
+    for (const e of item.no) {
+      const r = await run([pack([sample(item.title)]),pack([sample(item.title)])], '42', 'series', item.season, e);
+      assert.equal(r.found.length, 0, item.title+' must not match episode '+e);
+    }
+  });
+}
+test('unparsed explicit episode numbers fail closed rather than becoming season packs', async () => {
+  const invalid = [
+    'Show Season 1 / Episode 1234',
+    'Show \u0421\u0435\u0437\u043e\u043d 1 / \u0441\u0435\u0440\u0438\u044f 1234',
+    'Show 1 \u0441\u0435\u0437\u043e\u043d \u0441\u0435\u0440\u0438\u044f 1234'
+  ];
+  for (const title of invalid) {
+    const r = await run([pack([sample(title)]),pack([sample(title)])], '42', 'series', 1, 2);
+    assert.equal(r.found.length,0,title);
+  }
+});
+test('plain season packs remain supported without an explicit episode number', async () => {
+  const r = await run([pack([sample('Show Season 1')])], '42','series',1,8);
+  assert.equal(r.found.length,1);
+  assert.match(r.found[0].title,/Episode selection not verified/);
+});
+
+test('reversed and invalid episode spans do not become valid release matches', async () => {
+  const titles = [
+    'Show S01E10-02',
+    'Show S01E10-E02',
+    'Show 1x10-2',
+    'Show \u0421\u0435\u0437\u043e\u043d 1 \u0441\u0435\u0440\u0438\u044f 10-2',
+    'Show S01E01-999',
+    'Show 1x01-999'
+  ];
+  for (const title of titles) {
+    for (const episode of [1,2,5,10,99]) {
+      const r=await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,episode);
+      assert.equal(r.found.length,0,`${title} must reject episode ${episode}`);
+    }
+  }
+});
+test('Russian separator and episode-word variants select only the labelled episode', async () => {
+  const variants = [
+    'Show \u0421\u0435\u0437\u043e\u043d 1 / 03 \u0441\u0435\u0440\u0438\u044f',
+    'Show 1 \u0441\u0435\u0437\u043e\u043d / 03 \u0441\u0435\u0440\u0438\u044f',
+    'Show \u0421\u0435\u0437\u043e\u043d 1 \u042d\u043f\u0438\u0437\u043e\u0434 03'
+  ];
+  for (const title of variants) {
+    assert.equal((await run([pack([sample(title)])],'42','series',1,3)).found.length,1,title);
+    assert.equal((await run([pack([sample(title)]),pack([sample(title)])],'42','series',1,5)).found.length,0,title);
   }
 });

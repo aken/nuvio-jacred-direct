@@ -50,8 +50,10 @@ Seeder and peer counts are provided by JacRed and may be incomplete or outdated.
 
 ## Episode parsing reliability
 
-Season-and-episode labels in release titles are hints, not a file index. Named
-intervals such as `Season 1: Episodes 1-3` are matched only to those episodes,
+Season-and-episode labels in release titles are hints, not a file index.
+An explicit episode number that cannot be parsed safely is rejected rather
+than treated as an entire season. Named intervals such as
+`Season 1: Episodes 1-3` are matched only to those episodes,
 not every episode in the season. A matching multi-episode result still shows
 `Episode selection not verified`, because Nuvio does not expose the selected
 file index through this provider contract.
