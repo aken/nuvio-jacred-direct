@@ -44,7 +44,7 @@ The plugin searches JacRed using movie or series metadata from TMDB, validates B
 
 For TV episodes, it checks the season and episode numbers where they can be identified. Results that may contain more than one episode are labelled **Episode selection not verified**. Nuvio's torrent engine still has to select the correct file; the plugin cannot guarantee that choice.
 
-Source titles may be localized. The parser recognizes common season and episode formats, including localized season labels. The code accepts both 40-character hexadecimal and 32-character base32 BitTorrent v1 info hashes and emits a canonical BTIH magnet for Nuvio. Only supported public tracker URLs are retained; malformed, local-network and credential-bearing tracker URLs are dropped. Torrent v2-only links and direct `.torrent` downloads are not supported.
+Source titles may be localized. The parser recognizes common season and episode formats, including localized labels, multi-season ranges, and comma-separated episode lists. Ambiguous packs remain labelled rather than being presented as exact-file matches. The code accepts both 40-character hexadecimal and 32-character base32 BitTorrent v1 info hashes and emits a canonical BTIH magnet for Nuvio. Only supported public tracker URLs are retained; malformed, reserved-network and obviously credential-bearing tracker URLs are dropped. Torrent v2-only links and direct `.torrent` downloads are not supported.
 
 Seeder and peer counts are provided by JacRed and may be incomplete or outdated. A minimum-seeder filter excludes releases with unknown counts rather than treating them as verified. A magnet is a lead, not a promise that a stream will play.
 

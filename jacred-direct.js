@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.4
+/* JacRed Direct for Nuvio - 0.0.5
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -20,7 +20,6 @@
 
   function text(value) {
     return typeof value === 'string' ? value.trim() : '';
-
   }
   function clean(value, limit) {
     return text(value).replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').slice(0, limit).trim();
@@ -69,7 +68,7 @@
   }
   function mediaKind(type) {
     var v = text(type).toLowerCase();
-    return v === 'movie' ? 'movie' : v === 'series' || v === 'tv' || v === 'anime' ? 'series' : '';
+    return v === 'movie' ? 'movie' : v === 'series' || v === 'tv' || v === 'anime' || v === 'other' ? 'series' : '';
   }
   function yearOf(value) {
     var match = text(value).match(/^(19|20)\d{2}/);
@@ -163,9 +162,14 @@
     var octets = host.split('.');
     if (octets.length === 4 && octets.every(function (part) { return /^\d{1,3}$/.test(part) && Number(part) <= 255; })) {
       var a = Number(octets[0]), b = Number(octets[1]);
+      // Reject non-global IPv4 destinations, including documentation and
+      // benchmark ranges. Tracker URLs are untrusted external input.
+      var c = Number(octets[2]);
       if (a === 0 || a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) ||
-          (a === 192 && b === 168) || (a === 169 && b === 254) ||
-          (a === 100 && b >= 64 && b <= 127) || a >= 224) return false;
+          (a === 192 && (b === 0 && (c === 0 || c === 2) || b === 168 || b === 88 && c === 99)) ||
+          (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127) ||
+          (a === 198 && (b === 18 || b === 19 || b === 51 && c === 100)) ||
+          (a === 203 && b === 0 && c === 113) || a >= 224) return false;
     }
     return true;
   }
@@ -285,9 +289,9 @@
     // Use bounded title text to prevent excessive work on untrusted results.
     var t = clean(title, MAX_TITLE_LENGTH).replace(/[._]/g, ' ');
     var markers = [];
-    var season = /(?:^|[^a-z\d])s(?:eason\s*)?(\d{1,2})[\s-]*e(?:pisode\s*)?(\d{1,3})(?:\s*[-~]\s*e?(\d{1,3}))?/gi;
-    var numeric = /(?:^|[^\d])(\d{1,2})x(\d{1,3})(?:\s*[-~]\s*(\d{1,3}))?/gi;
-    var ru = /(?:\u0441\u0435\u0437\u043e\u043d\s*(\d{1,2})\s*[,;:\- ]*\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u0439|\.)?\s*(\d{1,3})(?:\s*[-~]\s*(\d{1,3}))?)/gi;
+    var season = /(?:^|[^a-z\d])s(?:eason\s*)?(\d{1,2})[\s-]*e(?:pisode\s*)?(\d{1,3})(?!\d)(?:\s*[-~]\s*e?(\d{1,3})(?!\d))?/gi;
+    var numeric = /(?:^|[^\d])(\d{1,2})x(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?/gi;
+    var ru = /(?:\u0441\u0435\u0437\u043e\u043d\s*(\d{1,2})\s*[,;:\- ]*\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u0439|\.)?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?)/gi;
     [season,numeric,ru].forEach(function (re) {
       var match;
       while ((match = re.exec(t)) !== null && markers.length < 30) {
@@ -298,13 +302,60 @@
       }
     });
     // S01E02E03 or S01E02-E03 are explicit multi-episode releases.
-    var consecutive = /(?:^|[^a-z\d])s(\d{1,2})[\s-]*e(\d{1,3})(?:[\s-]*e(\d{1,3})){1,6}/gi;
+    var consecutive = /(?:^|[^a-z\d])s(\d{1,2})[\s-]*e(\d{1,3})(?!\d)(?:[\s-]*e(\d{1,3})(?!\d)){1,6}/gi;
     var m;
     while ((m = consecutive.exec(t)) !== null) {
       var eRe = /e(\d{1,3})/gi, em;
       while ((em = eRe.exec(m[0])) !== null) markers.push({s:Number(m[1]),a:Number(em[1]),b:Number(em[1])});
     }
+    // Comma-separated episode lists (S01E02,E04) denote multiple files.
+    var list = /(?:^|[^a-z\d])s(\d{1,2})[\s-]*e(\d{1,3})(?!\d)((?:\s*[,;&+]\s*e?\d{1,3}(?!\d)){1,10})/gi;
+    while ((m = list.exec(t)) !== null) {
+      var values = [m[2]].concat((m[3].match(/\d{1,3}(?!\d)/g) || []));
+      for (var j = 0; j < values.length && markers.length < 40; j++)
+        markers.push({ s: Number(m[1]), a: Number(values[j]), b: Number(values[j]) });
+    }
     return markers;
+  }
+  function seasonNumbers(title) {
+    // Explicit season lists and ranges in release names are more reliable
+    // than a guess based on the requested episode number.
+    var t = clean(title, MAX_TITLE_LENGTH).replace(/[._]/g, ' ');
+    var found = Object.create(null);
+    function add(value) {
+      var season = Number(value);
+      if (Number.isInteger(season) && season >= 0 && season <= 99) found[season] = true;
+    }
+    function range(first, last) {
+      var start = Number(first), end = Number(last);
+      // A reversed or excessively wide range is not trustworthy evidence.
+      if (!Number.isInteger(start) || !Number.isInteger(end) ||
+          start < 0 || end > 99 || end < start || end - start > 30) return;
+      for (var n = start; n <= end; n++) add(n);
+    }
+    function listNumbers(raw) {
+      var matches = raw.match(/\d{1,2}(?!\d)/g) || [];
+      for (var i = 0; i < matches.length && i < 12; i++) add(matches[i]);
+    }
+    var m;
+    var shortSeason = /(?:^|[^a-z\d])s(\d{1,2})(?!\d|\s*e\d)(?:\s*[-~]\s*s?(\d{1,2})(?!\d|\s*e\d))?/gi;
+    while ((m = shortSeason.exec(t)) !== null) {
+      if (m[2] !== undefined) range(m[1], m[2]);
+      else add(m[1]);
+    }
+    var named = /(?:\bseasons?|\u0441\u0435\u0437\u043e\u043d(?:\u044b|\u043e\u0432)?)[\s:]*([0-9]{1,2})(?!\d)(?:\s*[-~]\s*(?:s)?([0-9]{1,2})(?!\d))?((?:\s*(?:[,;&+]|\band\b|\u0438)\s*(?:s)?[0-9]{1,2}(?!\d)){0,10})/gi;
+    while ((m = named.exec(t)) !== null) {
+      if (m[2] !== undefined) range(m[1], m[2]);
+      else add(m[1]);
+      if (m[3]) listNumbers(m[3]);
+    }
+    // Localized suffix notation: "1-3 seasons".
+    var suffix = /(?:^|\s)(\d{1,2})(?!\d)(?:\s*[-~]\s*(\d{1,2})(?!\d))?\s+(?:seasons?|\u0441\u0435\u0437\u043e\u043d)/gi;
+    while ((m = suffix.exec(t)) !== null) {
+      if (m[2] !== undefined) range(m[1], m[2]);
+      else add(m[1]);
+    }
+    return Object.keys(found).map(Number);
   }
   function seasonMatches(title, season, episode, row, conf) {
     var markers = parsedEpisodes(title);
@@ -317,21 +368,12 @@
       return { ok: matches && (!multi || conf.allowSeasonPacks), pack: multi };
     }
     var t = clean(title, MAX_TITLE_LENGTH).replace(/[._]/g, ' ');
-    var explicit = [];
-    var m, re = /(?:^|[^a-z\d])s(?:eason\s*)?(\d{1,2})(?!\s*e\d)/gi;
-    while ((m = re.exec(t)) !== null) explicit.push(Number(m[1]));
-    re = /\u0441\u0435\u0437\u043e\u043d(?:\u044b|\u043e\u0432)?\s*(\d{1,2})(?:\s*[-~]\s*s?(\d{1,2}))?|(?:^|\s)(\d{1,2})\s*\u0441\u0435\u0437\u043e\u043d/gi;
-    while ((m = re.exec(t)) !== null) {
-      explicit.push(Number(m[1] || m[3]));
-      if (m[2]) explicit.push(Number(m[2]));
-    }
+    var explicit = seasonNumbers(title);
     // Standalone E05 without a season is not sufficient evidence.
     if (/(?:^|[^a-z\d])e(?:pisode\s*)?\d{1,3}/i.test(t) && !explicit.length) return {ok:false,pack:false};
     var infoSeasons = row.info && Array.isArray(row.info.seasons) ? row.info.seasons.map(Number).filter(Number.isSafeInteger) : [];
     if (explicit.length) {
-      var first = explicit[0], last = explicit.length > 1 ? explicit[explicit.length - 1] : first;
-      var contains = explicit.indexOf(season) !== -1 || (explicit.length > 1 && season >= Math.min(first,last) && season <= Math.max(first,last));
-      return { ok: conf.allowSeasonPacks && contains, pack: true };
+      return { ok: conf.allowSeasonPacks && explicit.indexOf(season) !== -1, pack: true };
     }
     if (infoSeasons.length && infoSeasons.indexOf(season) !== -1) {
       return { ok: conf.allowSeasonPacks, pack: true };

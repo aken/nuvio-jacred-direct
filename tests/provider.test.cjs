@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.4');
+  assert.equal(manifest.version, '0.0.5');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -554,4 +554,55 @@ test('network tracker lists are bounded when duplicates are merged', async () =>
   assert.equal(x.found.length,1);
   assert.ok((x.found[0].url.match(/&tr=/g)||[]).length<=24);
   assert.ok(x.found[0].url.length<=4096);
+});
+
+// Inputs that exposed incorrect season-pack matching in the initial release.
+for (const format of ['Show Season 1-3 1080p', 'Show S01-03 1080p', 'Show Season 1, 2, 3 1080p', 'Show 1-3 seasons 1080p']) {
+  test('explicit season span includes the requested third season: ' + format, async () => {
+    const x = await run([pack([sample(format)])], '42', 'series', 3, 5);
+    assert.equal(x.found.length, 1);
+    assert.match(x.found[0].title, /Episode selection not verified/);
+  });
+}
+test('separate season lists do not imply missing intermediate seasons', async () => {
+  const x = await run([pack([sample('Show S01, S03')]), pack([sample('Show S01, S03')])], '42', 'series', 2, 5);
+  assert.equal(x.found.length, 0);
+});
+test('reversed season span is not evidence for a requested season', async () => {
+  const x = await run([pack([sample('Show Season 5-3')]), pack([sample('Show Season 5-3')])], '42', 'series', 4, 5);
+  assert.equal(x.found.length, 0);
+});
+test('overlong season and episode numbers cannot match partial digit prefixes', async () => {
+  for (const label of ['Show S01E1000', 'Show 1x1000', 'Show Season 100']) {
+    const x = await run([pack([sample(label)]), pack([sample(label)])], '42', 'series', 1, 100);
+    assert.equal(x.found.length, 0, label);
+  }
+});
+test('reserved documentation and benchmarking tracker addresses are stripped', async () => {
+  const blocked = ['198.18.1.2', '198.19.1.2', '198.51.100.1', '203.0.113.6', '192.0.2.9', '192.0.0.1'];
+  const good = 'udp://tracker.example.net:6969/announce';
+  const magnet = 'magnet:?xt=urn:btih:' + HASH_A + blocked.map(h => '&tr=' + encodeURIComponent('http://' + h + ':80/announce')).join('') + '&tr=' + encodeURIComponent(good);
+  const x = await run([pack([sample('Movie', HASH_A, 5, { MagnetUri: magnet })])]);
+  assert.equal((x.found[0].url.match(/&tr=/g) || []).length, 1);
+  assert.ok(x.found[0].url.includes(encodeURIComponent(good)));
+});
+test('Android other media kind uses the TV/series provider contract', async () => {
+  const x = await run([pack([sample('Show S02E03')])], '42', 'other', 2, 3);
+  assert.equal(x.found.length, 1);
+});
+
+test('comma-separated episode lists match only the numbered episodes', async () => {
+  const title='Show S01E02,E04 1080p';
+  const valid=await run([pack([sample(title)])], '42','series',1,4);
+  assert.equal(valid.found.length,1);
+  assert.match(valid.found[0].title,/Episode selection not verified/);
+  const invalid=await run([pack([sample(title)]),pack([sample(title)])], '42','series',1,3);
+  assert.equal(invalid.found.length,0);
+});
+test('plugin metadata and package version remain synchronized', () => {
+  const pkg=JSON.parse(fs.readFileSync(path.join(__dirname,'..','package.json'), 'utf8'));
+  const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
+  assert.equal(manifest.version,pkg.version);
+  assert.equal(manifest.scrapers[0].version,pkg.version);
+  assert.match(pkg.version,/^0\.0\.5$/);
 });
