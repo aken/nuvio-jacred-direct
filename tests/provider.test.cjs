@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.3');
+  assert.equal(manifest.version, '0.0.4');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -84,7 +84,7 @@ test('fetches localized movie metadata and searches both names and year', async 
   assert.equal(query(x.calls[1]).searchParams.get('title_original'), 'The Matrix');
   assert.equal(query(x.calls[1]).searchParams.get('year'), '1999');
   assert.equal(query(x.calls[1]).searchParams.get('is_serial'), '1');
-  assert.equal(query(x.calls[1]).searchParams.get('limit'), '120');
+  assert.equal(query(x.calls[1]).searchParams.get('limit'), '100');
   assert.equal(x.found[0].url.startsWith('magnet:?'), true);
   assert.equal(x.found[0].infoHash, HASH_A);
 });
@@ -198,9 +198,10 @@ test('known zero seeders remain visible by default', async () => {
   const x = await run([pack([sample('Film',HASH_A,0)])]);
   assert.equal(x.found.length,1);
 });
-test('minimum seeders excludes weak known counts but not unknown counts', async () => {
+test('minimum seeders rejects unverified counts as well as weak known counts', async () => {
   const x = await run([pack([sample('Film',HASH_A,0),sample('Film2',HASH_B,3),sample('Film3',HASH_C,undefined,{Seeders:null})])],'603','movie',null,null,{settings:{minSeeders:2}});
-  assert.equal(x.found.length,2);
+  assert.equal(x.found.length,1);
+  assert.equal(x.found[0].infoHash,HASH_B);
 });
 test('strict year gate skips wrong movie, accepts exact year', async () => {
   const x = await run([movieMeta,pack([sample('The Matrix 2024 1080p'),sample('The Matrix 1999 1080p',HASH_B)])], '603','movie',null,null,{tmdbKey:'KEY'});
@@ -340,7 +341,8 @@ test('no external packages, backend requirements or unwanted secret-bearing code
   assert.ok(!source.includes('eval('));
   assert.ok(!source.includes('X-Api-Key\u0027]'));
   assert.ok(!source.includes('http://'));
-  assert.ok(!source.includes('localhost'));
+  assert.ok(!source.includes('http://localhost'));
+  assert.ok(!source.includes('https://localhost')); 
 });
 
 test('public JacRed requests do not transmit API credentials', async () => {
@@ -362,14 +364,14 @@ test('native source card preserves the release name and includes availability de
   const item = x.found[0];
   assert.match(item.name,/JacRed.*1080p.*7 seeds/);
   assert.match(item.title,/^The Matrix 1999 1080p WEB-DL HDR10\+ HEVC\n/);
-  assert.match(item.title,/rutracker.*8.0 GiB.*0 leechers.*WEB-DL.*HDR10\+.*HEVC/);
+  assert.match(item.title,/rutracker.*8.0 GiB.*0 peers.*WEB-DL.*HDR10\+.*HEVC/);
   assert.ok(!Object.hasOwn(item, 'size'), 'Nuvio must use release title rather than size for description');
 });
-test('no guessed leecher counts and single leecher grammar', async () => {
+test('peers are reported as peers without guessing a leecher count', async () => {
   const x=await run([pack([sample('The Matrix 1999 1080p',HASH_A,0),sample('The Matrix 1999 720p',HASH_B,1,{Peers:1})])]);
   const byHash = new Map(x.found.map(v=>[v.infoHash,v]));
-  assert.ok(!byHash.get(HASH_A).title.includes('leecher'));
-  assert.match(byHash.get(HASH_B).title,/1 leecher/);
+  assert.ok(!byHash.get(HASH_A).title.includes('peer'));
+  assert.match(byHash.get(HASH_B).title,/1 peer/);
 });
 test('short DV voice metadata is not mistaken for Dolby Vision on old AVI releases', async () => {
   const x=await run([pack([sample('The Matrix 1999 DV AVI 1080p',HASH_A,4)])]);
@@ -461,4 +463,95 @@ test('provider does not assume a browser DOM or a TV-specific global API', () =>
   assert.ok(!/\b(?:document|navigator|location|tizen|webOS|webos|Android)\./.test(source));
   assert.ok(!/\brequire\s*\(/.test(source));
   assert.ok(!/\bprocess\./.test(source));
+});
+
+
+test('canonical magnet is compatible with Tizen BTIH extraction', async () => {
+  const b32 = 'A'.repeat(32);
+  const x = await run([pack([sample('Movie',HASH_A,7,{MagnetUri:'magnet:?dn=x&xt=urn%3Abtih%3A'+b32})])]);
+  assert.equal(x.found[0].infoHash,'0'.repeat(40));
+  assert.match(x.found[0].url,/^magnet:\?xt=urn:btih:[a-f0-9]{40}(?:&|$)/);
+});
+test('duplicate torrent hashes retain distinct public trackers', async () => {
+  const one='udp://tracker.one.example:6969/announce';
+  const two='https://tracker.two.example/announce';
+  const x = await run([pack([
+    sample('Movie 720p',HASH_A,2,{MagnetUri:'magnet:?xt=urn:btih:'+HASH_A+'&tr='+encodeURIComponent(one)}),
+    sample('Movie 1080p',HASH_A,8,{MagnetUri:'magnet:?xt=urn:btih:'+HASH_A+'&tr='+encodeURIComponent(two)})
+  ])]);
+  assert.equal(x.found.length,1);
+  assert.equal(x.found[0].quality,'1080p');
+  assert.equal((x.found[0].url.match(/&tr=/g)||[]).length,2);
+  assert.ok(x.found[0].url.includes(encodeURIComponent(one)));
+  assert.ok(x.found[0].url.includes(encodeURIComponent(two)));
+});
+test('private, local, malformed and credentialed trackers are excluded', async () => {
+  const trackers = [
+    'http://127.0.0.1:80/announce','http://192.168.1.5/announce',
+    'http://localhost/announce','udp://10.2.3.4:80/announce',
+    'https://user:password@tracker.example/announce',
+    'udp://tracker.example.com:6969/announce', 'https://tracker.example.org/announce'
+  ];
+  const magnet='magnet:?xt=urn:btih:'+HASH_A+trackers.map(x=>'&tr='+encodeURIComponent(x)).join('');
+  const x=await run([pack([sample('Movie',HASH_A,2,{MagnetUri:magnet})])]);
+  assert.equal(x.found.length,1);
+  assert.equal((x.found[0].url.match(/&tr=/g)||[]).length,2);
+  assert.ok(!x.found[0].url.includes(encodeURIComponent('http://127.0.0.1')));
+  assert.ok(!x.found[0].url.includes('password'));
+});
+test('malformed tracker encoding never invalidates the valid BTIH', async () => {
+  const x=await run([pack([sample('Movie',HASH_A,2,{MagnetUri:'magnet:?xt=urn:btih:'+HASH_A+'&tr=%E0%A4%A'})])]);
+  assert.equal(x.found.length,1);
+  assert.equal(x.found[0].url,'magnet:?xt=urn:btih:'+HASH_A);
+});
+test('recognizes 4K UHD, frame rates and explicit raster dimensions', async () => {
+  const titles = [
+    ['Show 2160p60', '2160p'],['Show 1920x1080','1080p'],
+    ['Show 2560x1440','1440p'],['Show 3840x2160','2160p'],
+    ['Show 1080p60','1080p'],['Show 8K','4320p']
+  ];
+  for (const [title,expected] of titles) {
+    const x=await run([pack([sample(title)])]);
+    assert.equal(x.found[0].quality, expected, title);
+  }
+});
+test('numeric TMDB IDs from native runtimes are accepted', async () => {
+  const x=await run([pack([sample()])],603);
+  assert.equal(x.found.length,1);
+  assert.equal(query(x.calls[0]).searchParams.get('query'),'tmdb603');
+});
+test('custom maxResults still yields at most the configured cap after deduplication', async () => {
+  const x=await run([pack([sample('Movie A',HASH_A,1), sample('Movie B',HASH_A,2), sample('Movie C',HASH_B,3)])], '603','movie',null,null,{settings:{maxResults:1}});
+  assert.equal(x.found.length,1);
+  assert.equal(x.found[0].infoHash,HASH_B);
+});
+
+test('tracker URL validation rejects noncanonical private IP spellings', async () => {
+  const bad = ['http://0177.0.0.1/announce','udp://0x7f.0.0.1:80/announce',
+    'https://2130706433/announce', 'https://tracker.example:0/announce',
+    'udp://tracker.example:65536/announce','https://router.home.arpa/announce'];
+  const good = 'udp://tracker.open.example:6969/announce';
+  const magnet = 'magnet:?xt=urn:btih:' + HASH_A + bad.concat([good]).map(url => '&tr='+encodeURIComponent(url)).join('');
+  const x = await run([pack([sample('Movie', HASH_A, 6, {MagnetUri: magnet})])]);
+  assert.equal((x.found[0].url.match(/&tr=/g) || []).length, 1);
+  assert.ok(x.found[0].url.includes(encodeURIComponent(good)));
+});
+test('sensitive tracker query credentials are never forwarded', async () => {
+  const bad='https://tracker.example/announce?passkey=SENSITIVE123';
+  const good='udp://tracker.safe.example:6969/announce';
+  const magnet='magnet:?xt=urn:btih:'+HASH_A+'&tr='+encodeURIComponent(bad)+'&tr='+encodeURIComponent(good);
+  const x=await run([pack([sample('Movie',HASH_A,4,{MagnetUri:magnet})])]);
+  assert.ok(!x.found[0].url.includes('SENSITIVE123'));
+  assert.equal((x.found[0].url.match(/&tr=/g)||[]).length,1);
+});
+test('network tracker lists are bounded when duplicates are merged', async () => {
+  const rows=[];
+  for(let i=0;i<28;i++){
+    const url='udp://tracker'+i+'.example:6969/announce';
+    rows.push(sample('Movie',HASH_A,i,{MagnetUri:'magnet:?xt=urn:btih:'+HASH_A+'&tr='+encodeURIComponent(url)}));
+  }
+  const x=await run([pack(rows)]);
+  assert.equal(x.found.length,1);
+  assert.ok((x.found[0].url.match(/&tr=/g)||[]).length<=24);
+  assert.ok(x.found[0].url.length<=4096);
 });

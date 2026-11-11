@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.3
+/* JacRed Direct for Nuvio - 0.0.4
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -9,14 +9,18 @@
 
   var JACRED_ENDPOINT = 'https://jacred.su/api/v2.0/indexers/all/results';
   var TMDB_ENDPOINT = 'https://api.themoviedb.org/3/';
-  var API_LIMIT = 120;
+  var API_LIMIT = 100;
   var OUTPUT_LIMIT = 80;
   var MAX_ROWS = 220;
   var MAX_MAGNET_LENGTH = 8192;
   var MAX_TITLE_LENGTH = 500;
+  var MAX_TRACKERS = 24;
+  var MAX_TRACKER_LENGTH = 512;
+  var MAX_OUTPUT_MAGNET_LENGTH = 4096;
 
   function text(value) {
     return typeof value === 'string' ? value.trim() : '';
+
   }
   function clean(value, limit) {
     return text(value).replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ' ').replace(/\s+/g, ' ').slice(0, limit).trim();
@@ -118,6 +122,75 @@
     }
     return '';
   }
+  function magnetTrackers(magnet) {
+    if (!/^magnet:\?/i.test(magnet) || magnet.length > MAX_MAGNET_LENGTH) return [];
+    var values = [], seen = Object.create(null);
+    var fields = magnet.slice(8).split('&');
+    for (var i = 0; i < fields.length && i < 120 && values.length < MAX_TRACKERS; i++) {
+      var part = fields[i].split('=');
+      var key = text(part[0]).toLowerCase();
+      if (key !== 'tr') continue;
+      var value;
+      try { value = decodeURIComponent(part.slice(1).join('=')); } catch (_) { continue; }
+      if (!safeTracker(value)) continue;
+      var normalized = value.toLowerCase();
+      if (seen[normalized]) continue;
+      seen[normalized] = true;
+      values.push(value);
+    }
+    return values;
+  }
+  function safeTracker(value) {
+    if (typeof value !== 'string' || value.length > MAX_TRACKER_LENGTH || /[\u0000-\u0020\u007f]/.test(value)) return false;
+    var match = /^(https?|udp):\/\/([^\/?#]+)(?:[\/?#]|$)/i.exec(value);
+    if (!match || value.indexOf('#') !== -1) return false;
+    var authority = match[2];
+    if (authority.indexOf('@') !== -1 || authority.indexOf('\\') !== -1) return false;
+    // Keep local/private network addresses and hostnames out of public trackers.
+    var portMatch = /:(\d{1,5})$/.exec(authority);
+    if (portMatch && (Number(portMatch[1]) < 1 || Number(portMatch[1]) > 65535)) return false;
+    var host = authority.toLowerCase().replace(/:\d{1,5}$/, '');
+    if (!host || /[^a-z0-9.\-]/i.test(host)) return false;
+    if (/^\d+$/.test(host) || /^0x[\da-f]+$/i.test(host) || /\.\.|\.$/.test(host)) return false;
+    if (host.split('.').some(function (label) { return /^0x[0-9a-f]+$/i.test(label) || /^0\d+$/.test(label); })) return false;
+    if (/(?:^|\.)(?:localdomain|home\.arpa)$/.test(host)) return false;
+    var query = value;
+    try { query = decodeURIComponent(value); } catch (_) {}
+    if (/[?&](?:passkey|authkey|auth|token|api_?key|password|secret|session|pass)=/i.test(query)) return false;
+    if (host.split('.').some(function (label) { return !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label); })) return false;
+    if (/(^|\.)(?:localhost|local|lan|home|internal|test|invalid)$/.test(host)) return false;
+    if (/^(?:0|10|127|169\.254|192\.168)\./.test(host)) return false;
+    var octets = host.split('.');
+    if (octets.length === 4 && octets.every(function (part) { return /^\d{1,3}$/.test(part) && Number(part) <= 255; })) {
+      var a = Number(octets[0]), b = Number(octets[1]);
+      if (a === 0 || a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) ||
+          (a === 192 && b === 168) || (a === 169 && b === 254) ||
+          (a === 100 && b >= 64 && b <= 127) || a >= 224) return false;
+    }
+    return true;
+  }
+  function buildMagnet(hash, trackers) {
+    var magnet = 'magnet:?xt=urn:btih:' + hash;
+    for (var i = 0; i < trackers.length && i < MAX_TRACKERS; i++) {
+      var next = '&tr=' + encodeURIComponent(trackers[i]);
+      if (magnet.length + next.length > MAX_OUTPUT_MAGNET_LENGTH) break;
+      magnet += next;
+    }
+    return magnet;
+  }
+  function mergedTrackers(primary, secondary) {
+    var seen = Object.create(null), result = [];
+    [primary || [], secondary || []].forEach(function (list) {
+      for (var i = 0; i < list.length && result.length < MAX_TRACKERS; i++) {
+        var tracker = list[i];
+        var key = tracker.toLowerCase();
+        if (seen[key]) continue;
+        seen[key] = true;
+        result.push(tracker);
+      }
+    });
+    return result;
+  }
   function sizeText(size) {
     var bytes = Number(size);
     if (!Number.isFinite(bytes) || bytes <= 0) return '';
@@ -128,13 +201,19 @@
   }
   function quality(title) {
     var value = title.toLowerCase().replace(/_/g, ' ');
-    if (/(?:^|[^a-z\d\u0400-\u052f])(?:2160p?|4[k\u043a]|uhd)(?![a-z\d\u0400-\u052f])/i.test(value)) return '2160p';
-    if (/(?:^|[^\d])(?:1080p?|fhd|full[ ._-]?hd)(?!\d)/i.test(value)) return '1080p';
-    if (/(?:^|[^\d])720p?(?!\d)/i.test(value)) return '720p';
-    if (/(?:^|[^\d])480p?(?!\d)/i.test(value)) return '480p';
+    // Only explicit resolution evidence is sufficient. Do not infer it from size.
+    var dimensions = /(?:^|[^0-9])(\d{3,4})\s*[x\u00d7]\s*(4320|2160|1440|1080|720|576|480)(?!\d)/i.exec(value);
+    if (dimensions && Number(dimensions[1]) >= Number(dimensions[2]) && Number(dimensions[1]) <= Number(dimensions[2]) * 3)
+      return Number(dimensions[2]) === 2160 ? '2160p' : dimensions[2] + 'p';
+    if (/(?:^|[^a-z\d\u0400-\u052f])(?:4320p?(?:\d{2,3})?|8[k\u043a])(?![a-z\u0400-\u052f])/i.test(value)) return '4320p';
+    if (/(?:^|[^a-z\d\u0400-\u052f])(?:2160p?(?:\d{2,3})?|4[k\u043a]|uhd)(?![a-z\u0400-\u052f])/i.test(value)) return '2160p';
+    if (/(?:^|[^a-z\d])1440p?(?:\d{2,3})?(?![a-z])/i.test(value)) return '1440p';
+    if (/(?:^|[^a-z\d])(?:1080p?(?:\d{2,3})?|fhd|full[ .-]?hd)(?![a-z])/i.test(value)) return '1080p';
+    if (/(?:^|[^a-z\d])720p?(?:\d{2,3})?(?![a-z])/i.test(value)) return '720p';
+    if (/(?:^|[^a-z\d])480p?(?:\d{2,3})?(?![a-z])/i.test(value)) return '480p';
     return 'Unknown';
   }
-  function qualityRank(q) { return q === '2160p' ? 4 : q === '1080p' ? 3 : q === '720p' ? 2 : q === '480p' ? 1 : 0; }
+  function qualityRank(q) { return q === '4320p' ? 6 : q === '2160p' ? 5 : q === '1440p' ? 4 : q === '1080p' ? 3 : q === '720p' ? 2 : q === '480p' ? 1 : 0; }
   function seedCount(row) {
     if (row.Seeders === null || row.Seeders === undefined || row.Seeders === '') return -1;
     var number = Number(row.Seeders);
@@ -268,7 +347,7 @@
     var hash = infoHash(magnet);
     if (!hash) return null;
     var seeds = seedCount(row);
-    if (conf.minSeeders > 0 && seeds >= 0 && seeds < conf.minSeeders) return null;
+    if (conf.minSeeders > 0 && seeds < conf.minSeeders) return null;
     if (kind === 'movie' && !releaseYearMatches(row, year)) return null;
     var pack = false;
     if (kind === 'series') {
@@ -282,14 +361,17 @@
     var availability = seeds < 0 ? 'Seeders unknown' : seeds + (seeds === 1 ? ' seed' : ' seeds');
     var details = [tracker, sz];
     var peers = peersCount(row);
-    if (peers >= 0) details.push(peers + (peers === 1 ? ' leecher' : ' leechers'));
+    // JacRed reports Peers, not a guaranteed leecher-only count.
+    if (peers >= 0) details.push(peers + (peers === 1 ? ' peer' : ' peers'));
     details = details.concat(releaseTags(title), sourceAudioDetails(row));
     // Nuvio maps a supplied `size` field into stream.description and hides
     // stream.title on its source cards. Keep size inside title instead.
     var display = title + '\n' + details.filter(Boolean).join(' \u00b7 ');
     if (pack) display += '\nEpisode selection not verified';
+    var trackers = magnetTrackers(magnet);
     return {
-      url: magnet,
+      url: buildMagnet(hash, trackers),
+      trackers: trackers,
       infoHash: hash,
       title: display,
       name: 'JacRed \u00b7 ' + q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Season pack' : ''),
@@ -306,11 +388,19 @@
       var current = normalize(rows[i], kind, year, season, episode, conf, metadata);
       if (!current) continue;
       var previous = distinct[current.infoHash];
-      if (!previous || (previous.isPack && !current.isPack) || (previous.isPack === current.isPack && (current.seeders > previous.seeders || (current.seeders === previous.seeders && current.qualityRank > previous.qualityRank)))) {
-        distinct[current.infoHash] = current;
-      }
+      if (!previous) { distinct[current.infoHash] = current; continue; }
+      var replace = (previous.isPack && !current.isPack) ||
+        (previous.isPack === current.isPack && (current.seeders > previous.seeders ||
+          (current.seeders === previous.seeders && current.qualityRank > previous.qualityRank)));
+      var combined = mergedTrackers(previous.trackers, current.trackers);
+      if (replace) { current.trackers = combined; distinct[current.infoHash] = current; }
+      else previous.trackers = combined;
     }
-    return Object.keys(distinct).map(function (key) { return distinct[key]; }).sort(function (a,b) {
+    return Object.keys(distinct).map(function (key) {
+      var result = distinct[key];
+      result.url = buildMagnet(result.infoHash, result.trackers);
+      return result;
+    }).sort(function (a,b) {
       return Number(a.isPack) - Number(b.isPack) || b.seeders - a.seeders || b.qualityRank - a.qualityRank || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0);
     }).slice(0, conf.maxResults).map(function (r) {
       return { url: r.url, infoHash: r.infoHash, title: r.title, name: r.name, quality: r.quality };
@@ -323,7 +413,8 @@
     return result.Results;
   }
   async function getStreams(tmdbId, mediaType, season, episode) {
-    var id = text(tmdbId), kind = mediaKind(mediaType), conf = settings();
+    var id = typeof tmdbId === 'number' && Number.isSafeInteger(tmdbId) ? String(tmdbId) : text(tmdbId);
+    var kind = mediaKind(mediaType), conf = settings();
     if (!/^\d{1,10}$/.test(id) || !kind) return [];
     // Season 0 denotes TV specials in the TMDB model.
     var s = integer(season, null, 0, 99), e = integer(episode, null, 1, 999);

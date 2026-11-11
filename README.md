@@ -16,7 +16,7 @@ This is an independent project, not affiliated with JacRed or Nuvio.
 
 LG webOS 5 uses lower plugin resource limits than webOS 6+. Samsung Tizen 4 and 5 do not support executable JS plugins in the official NuvioTVSmart package. Platform versions alone are not sufficient: the installed application must also expose an operational plugin runtime and local torrent playback. Android builds without the plugin module are not supported.
 
-The repository manifest does not impose a platform restriction. It does **not** override a host's own runtime or playback capabilities. Compatibility above is based on the Nuvio source code; installation and playback have not yet been verified on real devices across these platforms.
+The repository manifest does not impose a platform restriction. It does **not** override a host's own runtime or playback capabilities. Compatibility above is based on the Nuvio source code; the plugin has been confirmed by a tester to find and play at least some sources on Samsung Tizen. Results on LG webOS and Android have not been verified on physical devices.
 
 ## Install
 
@@ -40,13 +40,13 @@ The public JacRed service can change its access rules. This version does not sup
 
 ## How it works
 
-The plugin searches JacRed using movie or series metadata from TMDB, verifies magnet hashes, removes duplicate releases, and sorts the remaining results. Its native source cards show the release name, tracker, reported seeders, optional leechers, size, supported quality labels, and language or voice data when JacRed reports it. It never infers audio language from the tracker name. These are text fields rendered by Nuvio; the plugin cannot create custom poster cards or change the TV interface. When a title-and-year search is empty, it retries the known titles without the year constraint while checking returned titles and years locally. When metadata is unavailable, it can fall back to JacRed's TMDB ID lookup, which depends on the external service's configuration.
+The plugin searches JacRed using movie or series metadata from TMDB, validates BTIH hashes, merges usable public trackers across duplicate releases, and sorts the remaining results. Its native source cards show the release name, tracker, reported seeders, optional peer counts, size, supported quality labels, and language or voice data when JacRed reports it. It never infers audio language from the tracker name. These are text fields rendered by Nuvio; the plugin cannot create custom poster cards or change the TV interface. When a title-and-year search is empty, it retries the known titles without the year constraint while checking returned titles and years locally. When metadata is unavailable, it can fall back to JacRed's TMDB ID lookup, which depends on the external service's configuration.
 
 For TV episodes, it checks the season and episode numbers where they can be identified. Results that may contain more than one episode are labelled **Episode selection not verified**. Nuvio's torrent engine still has to select the correct file; the plugin cannot guarantee that choice.
 
-Source titles may be localized. The parser recognizes common season and episode formats, including localized season labels. The code works with both 40-character hexadecimal and 32-character base32 BitTorrent v1 info hashes. Torrent v2-only links and direct `.torrent` downloads are not supported.
+Source titles may be localized. The parser recognizes common season and episode formats, including localized season labels. The code accepts both 40-character hexadecimal and 32-character base32 BitTorrent v1 info hashes and emits a canonical BTIH magnet for Nuvio. Only supported public tracker URLs are retained; malformed, local-network and credential-bearing tracker URLs are dropped. Torrent v2-only links and direct `.torrent` downloads are not supported.
 
-Seeder counts are provided by JacRed and may be incomplete or outdated. A magnet is a lead, not a promise that a stream will play.
+Seeder and peer counts are provided by JacRed and may be incomplete or outdated. A minimum-seeder filter excludes releases with unknown counts rather than treating them as verified. A magnet is a lead, not a promise that a stream will play.
 
 ## Limitations
 
@@ -62,6 +62,10 @@ Seeder counts are provided by JacRed and may be incomplete or outdated. A magnet
 
 If there are no sources, check that the provider is enabled and the local plugin runtime is healthy. Test with **TMDB 603** in the available plugin diagnostics. Confirm your device can reach `jacred.su` and `api.themoviedb.org`. If a magnet appears but will not play, check the platform torrent engine, peer connectivity, and supported media formats. A source being listed is not proof it can be played.
 
+## Diagnostics
+
+For intermittent failures, capture the Nuvio version, plugin test diagnostics, media type, TMDB ID, HTTP status (if shown), and whether the source was listed but not playable. These details help distinguish JacRed lookup errors from host runtime limits and playback engine failures. Do not share API keys or private tracker credentials.
+
 ## Development
 
 Requires Node.js 20 or later. Run:
@@ -72,7 +76,7 @@ npm run verify
 
 The test suite checks API error handling, metadata searches, input validation, torrent hashes, duplicate results, episode matching, multi-episode warnings, result limits and Nuvio's expected output shape. GitHub Actions runs the same checks on each push and pull request.
 
-Automated tests use simulated API responses. **Live JacRed searches and playback on Tizen, webOS, or Android have not been verified.** To validate on each platform, install the plugin, search for a movie, confirm playback, then test two different episodes from the same multi-file release and check which file the torrent engine selected.
+Automated tests use simulated API responses. **A user has confirmed successful source discovery and some playback on Samsung Tizen; complete TV regression testing, all torrent formats, and playback on webOS and Android remain unverified.** To validate on each platform, install the plugin, search for a movie, confirm playback, then test two different episodes from the same multi-file release and check which file the torrent engine selected.
 
 ## License and use
 
@@ -83,3 +87,4 @@ Distributed under the [MIT License](LICENSE). Only access and share content that
 - [NuvioTVSmart](https://github.com/NuvioMedia/NuvioTVSmart) - Samsung Tizen and LG webOS runtimes.
 - [NuvioTV](https://github.com/NuvioMedia/NuvioTV) - Android plugin runtime and integrated torrent engine.
 - [JacRed](https://github.com/jacred-fdb/jacred) - Jackett-compatible API and torrent search.
+
