@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.13
+/* JacRed Direct for Nuvio - 0.0.14
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -351,7 +351,20 @@
       var rest = labels.length - k - 1;
       var suffix = voices.length > 256 && labels.length > 4 ? ' +more' : (rest ? ' +' + rest : '');
       var attempt = header + chosen.concat(candidate).join(' / ') + suffix;
-      if (attempt.length > 72) break;
+      if (attempt.length > 72) {
+        if (chosen.length) break;
+        // UTF-16 width, not code-point count, determines the text budget.
+        // Emoji-only names can use two code units per code point.
+        var available = 72 - header.length - suffix.length;
+        var shortened = '';
+        var chars = Array.from(candidate);
+        for (var n = 0; n < chars.length; n++) {
+          if (shortened.length + chars[n].length + 1 > available) break;
+          shortened += chars[n];
+        }
+        candidate = shortened ? shortened.trim() + '\u2026' : '';
+        if (!candidate) break;
+      }
       chosen.push(candidate);
     }
     var omitted = labels.length - chosen.length;
@@ -364,12 +377,26 @@
   }
   function matchesMetadata(row, metadata) {
     if (!metadata || (!metadata.title && !metadata.original)) return true;
-    // Catalog aliases alone cannot prove that the returned torrent matches.
-    // The release title must contain a known title; metadata fields are hints.
-    var release = ' ' + normalizedWords(row.Title) + ' ';
+    // An alias somewhere inside a longer name is not a title match: "It"
+    // (2017) must not match "It Comes at Night" (2017), for example.
+    // Releases commonly begin with localized/original names separated by /.
+    var release = clean(row.Title, MAX_TITLE_LENGTH);
+    var segments = [release].concat(release.split(/\s*\/\s*|\s+\|\s+/));
     return [metadata.title, metadata.original].some(function (alias) {
       var name = normalizedWords(alias);
-      return name.length > 1 && release.indexOf(' ' + name + ' ') !== -1;
+      if (name.length < 2) return false;
+      return segments.some(function (segment) {
+        var words = normalizedWords(segment);
+        if (words === name) return true;
+        if (words.indexOf(name + ' ') !== 0) return false;
+        // A bracketed credit or release-data block terminates the title.
+        var opening = segment.search(/[\[(]/);
+        if (opening > 0 && normalizedWords(segment.slice(0, opening)) === name) return true;
+        var trailing = words.slice(name.length + 1);
+        // The next token must be release metadata rather than another word
+        // of an entirely different film's name.
+        return /^(?:(?:19|20)\d{2}|\d{3,4}p?|[248]k|fhd|uhd|web|webrip|bdrip|bdremux|bluray|blu|hdtv|hdrip|dvdrip|remux|h\.?26[45]|hevc|x26[45]|s\d{1,2}e\d{1,3}|season|seasons|\u0441\u0435\u0437\u043e\u043d|\d{3,4}x\d{3,4}|\d{1,2}\s+\u0441\u0435\u0437\u043e\u043d|extended|unrated|remastered|theatrical|directors|director|edition|uncut)(?:\s|$)/i.test(trailing);
+      });
     });
   }
   function releaseYearMatches(row, year) {
@@ -379,8 +406,12 @@
     var title = clean(row.Title, MAX_TITLE_LENGTH);
     // Ignore video dimensions such as 1920x1080: 1920 is not a release year.
     var words = [], match;
-    var re = /(?:^|[^\d])((?:19|20)\d{2})(?![\dx\u00d7]\d{3,4})/g;
-    while ((match = re.exec(title)) !== null) words.push(Number(match[1]));
+    var re = /(?:^|[^\d])((?:19|20)\d{2})(?!\d)/g;
+    while ((match = re.exec(title)) !== null) {
+      // Ignore video width even if spaces separate the x/\u00d7 and height.
+      if (/^\s*[x\u00d7]\s*\d{3,4}(?!\d)/i.test(title.slice(re.lastIndex))) continue;
+      words.push(Number(match[1]));
+    }
     if (!words.length) return true;
     return words.some(function (candidate) { return Math.abs(candidate - year) <= 1; });
   }

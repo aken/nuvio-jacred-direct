@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.13');
+  assert.equal(manifest.version, '0.0.14');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.13$/);
+  assert.match(pkg.version,/^0\.0\.14$/);
 });
 
 
@@ -1046,4 +1046,56 @@ test('voice abbreviation never leaves a dangling UTF-16 surrogate', async () => 
   const audio=x.found[0].title.split('\n')[2];
   assert.ok(audio.length<=72);
   assert.doesNotMatch(audio,/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+});
+
+// Independent audit: realistic title collisions, dimension years and long emoji voices.
+test('short film title cannot match a different film starting with the same word', async () => {
+  const meta={data:{title:'It',original_title:'It',release_date:'2017-09-08'}};
+  const bad=sample('It Comes at Night (2017) WEB-DL 1080p');
+  const x=await run([meta,pack([bad]),pack([bad])],'346364','movie',undefined,undefined,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,0);
+});
+test('film sequel is not an alias match for the original film', async () => {
+  const bad=sample('The Matrix Reloaded (2003) 1080p');
+  const x=await run([movieMeta,pack([bad]),pack([bad])],'603','movie',undefined,undefined,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,0);
+});
+test('title matching retains localized and original-language release headings', async () => {
+  const x=await run([movieMeta,pack([sample('\u041c\u0430\u0442\u0440\u0438\u0446\u0430 / The Matrix [1999, \u0421\u0428\u0410] BDRemux 1080p')])], '603','movie',undefined,undefined,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,1);
+});
+test('video dimensions separated by spaces are not treated as release years', async () => {
+  const meta={data:{title:'Test Film',original_title:'Test Film',release_date:'2026-06-01'}};
+  for (const dims of ['1920 \u00d7 1080','1920 x 1080','1920x1080']) {
+    const x=await run([meta,pack([sample('Test Film '+dims+' WEB-DL')])],'123','movie',undefined,undefined,{tmdbKey:'KEY'});
+    assert.equal(x.found.length,1,dims);
+  }
+});
+test('very wide Unicode voice names are shortened without an empty voice list', async () => {
+  const names=['\ud83d\ude00'.repeat(28),'\ud83d\ude0e'.repeat(28)];
+  const x=await run([pack([sample('Film 1080p',HASH_A,2,{languages:['ru','en','ukr'],info:{voices:names}})])]);
+  const audio=x.found[0].title.split('\n')[2];
+  assert.ok(audio.length <= 72,audio);
+  assert.match(audio,/Voices: \ud83d\ude00/u);
+  assert.match(audio,/\+1$/);
+  assert.doesNotMatch(audio,/Voices:  \+/);
+});
+
+test('short movie aliases match their exact title, not a longer unrelated one', async () => {
+  const meta={data:{title:'It',original_title:'It',release_date:'2017-09-08'}};
+  const x=await run([meta,pack([sample('It (2017) WEB-DL 1080p')])],'346364','movie',undefined,undefined,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,1);
+});
+test('bilingual release headings work with or without spaces around a slash', async () => {
+  const meta={data:{title:'Localized Name',original_title:'Original Name',release_date:'2021-01-01'}};
+  const rows=['Localized Name/Original Name (2021) WEB-DL','Localized Name / Original Name (2021) WEB-DL'];
+  for (const title of rows) {
+    const x=await run([meta,pack([sample(title)])],'123','movie',undefined,undefined,{tmdbKey:'KEY'});
+    assert.equal(x.found.length,1,title);
+  }
+});
+test('a slash inside an actual film name is not an alternative-title separator', async () => {
+  const meta={data:{title:'Face/Off',original_title:'Face/Off',release_date:'1997-06-01'}};
+  const x=await run([meta,pack([sample('Face/Off (1997) BDRemux 1080p')])],'123','movie',undefined,undefined,{tmdbKey:'KEY'});
+  assert.equal(x.found.length,1);
 });

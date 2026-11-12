@@ -146,3 +146,11 @@ Distributed under the [MIT License](LICENSE). Only access and share content that
 - [NuvioTVSmart](https://github.com/NuvioMedia/NuvioTVSmart) - Samsung Tizen and LG webOS runtimes.
 - [NuvioTV](https://github.com/NuvioMedia/NuvioTV) - Android plugin runtime and integrated torrent engine.
 - [JacRed](https://github.com/jacred-fdb/jacred) - Jackett-compatible API and torrent search.
+
+## Audit corrections in 0.0.14
+
+- Match localized/original title prefixes instead of substring occurrences in unrelated film names.
+- Ignore video dimensions with spaced separators when checking film release years.
+- Retain at least one shortened voice name when a Unicode-heavy label exceeds the text budget.
+
+These corrections change search result filtering and card text only; they do not alter Nuvio EngineFS or the torrent playback implementation.
