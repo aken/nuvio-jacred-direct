@@ -154,3 +154,23 @@ Distributed under the [MIT License](LICENSE). Only access and share content that
 - Retain at least one shortened voice name when a Unicode-heavy label exceeds the text budget.
 
 These corrections change search result filtering and card text only; they do not alter Nuvio EngineFS or the torrent playback implementation.
+
+## Update troubleshooting (0.0.15)
+
+The circle-arrow on a stream list reloads the **search results**, not the installed JavaScript.
+In **Nuvio Settings > Plugins**, select the JacRed Direct **repository** and choose
+**Refresh repository**; confirm that the installed provider shows **Version 0.0.15**.
+Then close and reopen Nuvio and refresh the stream list.
+
+Nuvio caches provider code per profile. When downloading updated JavaScript fails,
+Nuvio may retain and execute the previous cached code even after a manifest update.
+If obsolete headings such as `Season pack` or `Episode selection not verified`
+remain, verify the repository URL, remove **only the JacRed Direct repository**
+(if needed), and add it again using the manifest URL below. Do not clear the
+entire Nuvio app data or remove unrelated Torrentio/addons.
+
+With the new version, partial-season results like `1 season (1-3 of 8)` are
+included for episodes 1-3 and excluded for episodes 4-8. Sources that do not
+state a resolution use a known release format (for example, `WEBRip`). When neither
+resolution nor a release format is known, `Unknown` is retained. No resolution
+is inferred from file size or seed counts.

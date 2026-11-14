@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.14
+/* JacRed Direct for Nuvio - 0.0.15
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -267,7 +267,7 @@
     while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
     return bytes.toFixed(i ? 1 : 0) + ' ' + units[i];
   }
-  function quality(title) {
+  function qualityCandidates(title) {
     var value = title.toLowerCase().replace(/_/g, ' ');
     // Prefer explicit dimensions. A bare four-digit resolution label must end
     // at a token boundary; 21601080 is not a 2160p label.
@@ -293,8 +293,7 @@
     // encode at different resolutions. Never advertise the higher one as fact.
     for (var i = 0; i < labels.length; i++)
       if (labels[i][1].test(value)) detected[labels[i][0]] = true;
-    var resolutions = Object.keys(detected);
-    return resolutions.length === 1 ? resolutions[0] : 'Unknown';
+    return Object.keys(detected);
   }
   function qualityRank(q) { return q === '4320p' ? 6 : q === '2160p' ? 5 : q === '1440p' ? 4 : q === '1080p' ? 3 : q === '720p' ? 2 : q === '480p' ? 1 : 0; }
   function seedCount(row) {
@@ -502,6 +501,21 @@
     while ((m = namedSeasonPostfix.exec(t)) !== null && markers.length < 50) appendPostfix(m[1], m[2], m[3]);
     while ((m = numberedSeasonPostfix.exec(t)) !== null && markers.length < 50) appendPostfix(m[1], m[2], m[3]);
 
+    // Counted partial seasons: "season 1 (1-3 of 8)" is NOT a full-season pack.
+    // Accept only explicit bounded ranges with a stated total. The total is
+    // validation evidence, never an additional episode in the release.
+    var countedTail = '\\s*[\\(\\[]\\s*(\\d{1,3})(?!\\d)\\s*[-~\\u2013\\u2014]\\s*(\\d{1,3})(?!\\d)\\s*(?:\\u0441\\u0435\\u0440\\u0438\\u0438?\\s*)?(?:\\u0438\\u0437|of)\\s*(\\d{1,3})(?!\\d)\\s*[\\)\\]]';
+    var countedAfterNumber = new RegExp('(?:^|[^\\d])(\\d{1,2})(?!\\d)\\s+(?:\\u0441\\u0435\\u0437\\u043e\\u043d(?:\\u0430)?|season)'+countedTail, 'gi');
+    var countedAfterWord = new RegExp('(?:^|[^a-z\\d\\u0400-\\u052f])(?:\\u0441\\u0435\\u0437\\u043e\\u043d|season|s)\\s*(\\d{1,2})(?!\\d)'+countedTail, 'gi');
+    [countedAfterNumber, countedAfterWord].forEach(function (pattern) {
+      var item;
+      while ((item = pattern.exec(t)) !== null && markers.length < 50) {
+        var first = Number(item[2]), last = Number(item[3]), total = Number(item[4]);
+        var valid = first > 0 && last >= first && last <= total && total <= 999 && last - first < 100;
+        markers.push({ s: Number(item[1]), a: valid ? first : 0, b: valid ? last : 0 });
+      }
+    });
+
     // Russian postfix season with an episode label before its number.
     // Never mistake an explicitly numbered episode for a whole-season pack.
     var russianPostfix = /(?:^|[^\d])(\d{1,2})(?!\d)\s+\u0441\u0435\u0437\u043e\u043d(?:\u0430)?\s*[,;:.\-/]?\s*\u0441\u0435\u0440\u0438(?:\u044f|\u0438|\u0439)\s*[:.]?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?/gi;
@@ -623,14 +637,24 @@
       if (!found.ok) return null;
       pack = found.pack;
     }
-    var q = quality(title);
+    var qualityEvidence = qualityCandidates(title);
+    var q = qualityEvidence.length === 1 ? qualityEvidence[0] : 'Unknown';
+    var tags = releaseTags(title);
+    // If resolution is not stated, show the evidenced release format instead
+    // of a prominent "Unknown". This is a presentation fallback, not a guess.
+    var format = tags.filter(function (tag) {
+      return /^(?:WEB-DL|WEBRip|BDRemux|BDRip|HDRip|DVDRip)$/.test(tag);
+    })[0] || '';
+    var cardLabel = q === 'Unknown' && qualityEvidence.length === 0 && format ? format : q;
     var sz = sizeText(row.Size);
     var tracker = clean(row.Tracker, 35) || 'Unknown tracker';
     var availability = seeds < 0 ? 'Seeders unknown' : seeds + (seeds === 1 ? ' seed' : ' seeds');
     var peers = peersCount(row);
     // Keep the main row short enough for a TV. The original full torrent
     // title is used above for media/episode/quality validation, not discarded.
-    var technical = [tracker].concat(releaseTags(title), [sz]);
+    var technical = [tracker].concat(tags.filter(function (tag) {
+      return !(q === 'Unknown' && tag === cardLabel);
+    }), [sz]);
     // JacRed reports Peers, not a guaranteed leecher-only count.
     if (peers >= 0) technical.push(peers + (peers === 1 ? ' peer' : ' peers'));
     var audio = sourceAudioDetails(row);
@@ -642,8 +666,8 @@
       trackers: trackers,
       infoHash: hash,
       title: display,
-      name: q + ' \u00b7 ' + availability + (pack ? ' \u00b7 Multi-episode' : ''),
-      quality: q,
+      name: cardLabel + ' \u00b7 ' + availability + (pack ? ' \u00b7 Multi-episode' : ''),
+      quality: cardLabel,
       seeders: seeds,
       qualityRank: qualityRank(q),
       isPack: pack

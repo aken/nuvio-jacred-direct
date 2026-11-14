@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.14');
+  assert.equal(manifest.version, '0.0.15');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.14$/);
+  assert.match(pkg.version,/^0\.0\.15$/);
 });
 
 
@@ -1098,4 +1098,44 @@ test('a slash inside an actual film name is not an alternative-title separator',
   const meta={data:{title:'Face/Off',original_title:'Face/Off',release_date:'1997-06-01'}};
   const x=await run([meta,pack([sample('Face/Off (1997) BDRemux 1080p')])],'123','movie',undefined,undefined,{tmdbKey:'KEY'});
   assert.equal(x.found.length,1);
+});
+
+// Live Samsung screenshot regression: the title advertises only episodes 1-3.
+for (const title of [
+  '\u0410\u0439\u0434\u0430! 1 \u0441\u0435\u0437\u043e\u043d (1-3 \u0438\u0437 8) (2026) WEBRip',
+  '\u0410\u0439\u0434\u0430! \u0421\u0435\u0437\u043e\u043d 1 [1-3 \u0438\u0437 8] (2026) WEBRip',
+  'Aida Season 1 (1-3 of 8) (2026) WEBRip'
+]) {
+  test('counted partial season provides only the explicitly included episodes: ' + title, async () => {
+    const row=sample(title, HASH_A, 776, {Tracker:'bitru',Peers:3733});
+    for(const episode of [1,2,3]) {
+      const x=await run([pack([row])], '312','series',1,episode);
+      assert.equal(x.found.length,1, 'episode '+episode);
+      assert.match(x.found[0].name,/^WEBRip \u00b7 776 seeds \u00b7 Multi-episode$/);
+      assert.ok(!x.found[0].title.includes('WEBRip \u00b7 WEBRip'));
+      assert.equal(x.found[0].url,'magnet:?xt=urn:btih:'+HASH_A);
+    }
+    for(const episode of [4,8]) {
+      const x=await run([pack([row]),pack([row])], '312','series',1,episode);
+      assert.equal(x.found.length,0,'episode '+episode);
+    }
+  });
+}
+test('invalid counted ranges do not become unrestricted season packs', async () => {
+  for(const title of [
+    '\u0410\u0439\u0434\u0430! 1 \u0441\u0435\u0437\u043e\u043d (3-1 \u0438\u0437 8) WEBRip',
+    '\u0410\u0439\u0434\u0430! 1 \u0441\u0435\u0437\u043e\u043d (1-9 \u0438\u0437 8) WEBRip',
+    '\u0410\u0439\u0434\u0430! 1 \u0441\u0435\u0437\u043e\u043d (0-3 \u0438\u0437 8) WEBRip'
+  ]){
+    const x=await run([pack([sample(title)]),pack([sample(title)])], '312','series',1,2);
+    assert.equal(x.found.length,0,title);
+  }
+});
+test('resolution-unknown source uses a documented format label without claiming pixels', async () => {
+  const x=await run([pack([sample('Example Season 1',HASH_A,7,{Tracker:'rutor'})])],'312','series',1,2);
+  assert.equal(x.found.length,1);
+  assert.match(x.found[0].name,/^Unknown \u00b7 7 seeds \u00b7 Multi-episode$/);
+  assert.equal(x.found[0].quality,'Unknown');
+  const y=await run([pack([sample('Example S01E02 WEBRip 1080p')])],'312','series',1,2);
+  assert.equal(y.found[0].quality,'1080p');
 });
