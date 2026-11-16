@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.17
+/* JacRed Direct for Nuvio - 0.0.18
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -274,7 +274,7 @@
     var detected = Object.create(null);
     // Dimensions and resolution labels must agree. A width/height pair alone
     // used to short-circuit this validation and mislabel mixed releases.
-    var dimensionPattern = /(?:^|[^0-9])(\d{3,4})\s*[x\u00d7]\s*(4320|2160|1440|1080|720|576|480)(?!\d)/gi;
+    var dimensionPattern = /(?:^|[^0-9])(\d{3,4})\s*[x\u00d7\u0445]\s*(4320|2160|1440|1080|720|576|480)(?!\d)/gi;
     var dimensions;
     while ((dimensions = dimensionPattern.exec(value)) !== null) {
       var width = Number(dimensions[1]), height = Number(dimensions[2]);
@@ -371,7 +371,7 @@
     return header + chosen.join(' / ') + (voices.length > 256 && omitted > 0 ? ' +more' : (omitted ? ' +' + omitted : ''));
   }
   function normalizedWords(value) {
-    return clean(value, MAX_TITLE_LENGTH).toLowerCase()
+    return clean(value, MAX_TITLE_LENGTH).toLowerCase().replace(/\u0451/g, '\u0435')
       .replace(/[^a-z0-9\u00c0-\u024f\u0370-\u052f\u0590-\u06ff\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]+/g, ' ').trim();
   }
   function matchesMetadata(row, metadata) {
@@ -394,7 +394,7 @@
         var trailing = words.slice(name.length + 1);
         // The next token must be release metadata rather than another word
         // of an entirely different film's name.
-        return /^(?:(?:19|20)\d{2}|\d{3,4}p?|[248]k|fhd|uhd|web|webrip|bdrip|bdremux|bluray|blu|hdtv|hdrip|dvdrip|remux|h\.?26[45]|hevc|x26[45]|s\d{1,2}e\d{1,3}|season|seasons|\u0441\u0435\u0437\u043e\u043d|\d{3,4}x\d{3,4}|\d{1,2}\s+\u0441\u0435\u0437\u043e\u043d|extended|unrated|remastered|theatrical|directors|director|edition|uncut)(?:\s|$)/i.test(trailing);
+        return /^(?:(?:19|20)\d{2}|\d{3,4}p?|[248]k|fhd|uhd|web|webrip|bdrip|bdremux|bluray|blu|hdtv|hdrip|dvdrip|remux|h\.?26[45]|hevc|x26[45]|s\d{1,2}e\d{1,3}|season|seasons|\u0441\u0435\u0437\u043e\u043d|\d{3,4}[x\u0445]\d{3,4}|\d{1,2}\s+\u0441\u0435\u0437\u043e\u043d|extended|unrated|remastered|theatrical|directors|director|edition|uncut)(?:\s|$)/i.test(trailing);
       });
     });
   }
@@ -408,7 +408,7 @@
     var re = /(?:^|[^\d])((?:19|20)\d{2})(?!\d)/g;
     while ((match = re.exec(title)) !== null) {
       // Ignore video width even if spaces separate the x/\u00d7 and height.
-      if (/^\s*[x\u00d7]\s*\d{3,4}(?!\d)/i.test(title.slice(re.lastIndex))) continue;
+      if (/^\s*[x\u00d7\u0445]\s*\d{3,4}(?!\d)/i.test(title.slice(re.lastIndex))) continue;
       words.push(Number(match[1]));
     }
     if (!words.length) return true;
@@ -417,9 +417,13 @@
   function parsedEpisodes(title) {
     // Use bounded title text to prevent excessive work on untrusted results.
     var t = clean(title, MAX_TITLE_LENGTH).replace(/[._]/g, ' ');
+    // '-720p' is a video resolution, not an episode range ending at 720.
+    // Only mask the quality suffix for episode parsing; preserve the original
+    // title for quality detection and presentation.
+    t = t.replace(/[-~]\s*(?:4320|2160|1440|1080|720|576|480)p(?:\d{2,3})?(?=$|[^a-z\d])/gi, ' ');
     var markers = [];
     var season = /(?:^|[^a-z\d])s(?:eason\s*)?(\d{1,2})[\s-]*e(?:p(?:isode)?)?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*e?(\d{1,3})(?!\d))?/gi;
-    var numeric = /(?:^|[^\d])(\d{1,2})x(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?/gi;
+    var numeric = /(?:^|[^\d])(\d{1,2})[x\u0445](\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?/gi;
     var ru = /(?:\u0441\u0435\u0437\u043e\u043d\s*(\d{1,2})\s*[,;:\- ]*\u0441\u0435\u0440(?:\u0438\u044f|\u0438\u0438|\u0438\u0439|\.)?\s*(\d{1,3})(?!\d)(?:\s*[-~]\s*(\d{1,3})(?!\d))?)/gi;
     [season,numeric,ru].forEach(function (re) {
       var match;
@@ -504,13 +508,13 @@
     // Counted partial seasons: "season 1 (1-3 of 8)" is NOT a full-season pack.
     // Accept only explicit bounded ranges with a stated total. The total is
     // validation evidence, never an additional episode in the release.
-    var countedTail = '\\s*[\\(\\[]\\s*(\\d{1,3})(?!\\d)\\s*[-~\\u2013\\u2014]\\s*(\\d{1,3})(?!\\d)\\s*(?:\\u0441\\u0435\\u0440\\u0438\\u0438?\\s*)?(?:\\u0438\\u0437|of)\\s*(\\d{1,3})(?!\\d)\\s*[\\)\\]]';
+    var countedTail = '\\s*[\\(\\[]\\s*(?:(\\d{1,3})(?!\\d)\\s*[-~\\u2013\\u2014]\\s*)?(\\d{1,3})(?!\\d)\\s*(?:\\u0441\\u0435\\u0440(?:\\u0438\\u044f|\\u0438\\u0438|\\u0438\\u0439)\\s*)?(?:\\u0438\\u0437|of)\\s*(\\d{1,3})(?!\\d)\\s*[\\)\\]]';
     var countedAfterNumber = new RegExp('(?:^|[^\\d])(\\d{1,2})(?!\\d)\\s+(?:\\u0441\\u0435\\u0437\\u043e\\u043d(?:\\u0430)?|season)'+countedTail, 'gi');
     var countedAfterWord = new RegExp('(?:^|[^a-z\\d\\u0400-\\u052f])(?:\\u0441\\u0435\\u0437\\u043e\\u043d|season|s)\\s*(\\d{1,2})(?!\\d)'+countedTail, 'gi');
     [countedAfterNumber, countedAfterWord].forEach(function (pattern) {
       var item;
       while ((item = pattern.exec(t)) !== null && markers.length < 50) {
-        var first = Number(item[2]), last = Number(item[3]), total = Number(item[4]);
+        var first = item[2] === undefined ? 1 : Number(item[2]), last = Number(item[3]), total = Number(item[4]);
         var valid = first > 0 && last >= first && last <= total && total <= 999 && last - first < 100;
         markers.push({ s: Number(item[1]), a: valid ? first : 0, b: valid ? last : 0 });
       }

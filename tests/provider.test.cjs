@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.17');
+  assert.equal(manifest.version, '0.0.18');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.17$/);
+  assert.match(pkg.version,/^0\.0\.18$/);
 });
 
 
@@ -1176,4 +1176,104 @@ test('series heading in bracketed debut year must not re-add debut year after sh
   assert.equal(result.found.length,1);
   assert.equal(query(result.calls[1]).searchParams.get('year'),'2011');
   assert.ok(!result.found[0].title.includes('(2011)'), 'series debut year must not be injected into release card');
+});
+
+test('episode suffix video resolution must not become an episode range', async () => {
+  for (const [title, expectedQuality] of [
+    ['Show S01E02-720p', '720p'],
+    ['Show S01E02-480p', '480p'],
+    ['Show Season 1 Episode 2-720p', '720p'],
+    ['Show Season 1: 2-720p episodes', '720p']
+  ]) {
+    const ok = await run([pack([sample(title)])], '42', 'series', 1, 2);
+    assert.equal(ok.found.length, 1, title);
+    assert.equal(ok.found[0].quality, expectedQuality, title);
+    assert.doesNotMatch(ok.found[0].name, /Multi-episode/, title);
+    const wrong = await run([pack([sample(title)]), pack([])], '42', 'series', 1, 3);
+    assert.equal(wrong.found.length, 0, title + ' must not include episode 3');
+  }
+});
+
+test('Cyrillic \u0445/\u0425 in 1\u044502 release codes has the same meaning as Latin x', async () => {
+  for (const title of ['Show 1\u044502', 'Show 1\u042502', 'Show 01\u044502']) {
+    assert.equal((await run([pack([sample(title)])], '42', 'series', 1, 2)).found.length, 1, title);
+    assert.equal((await run([pack([sample(title)]), pack([])], '42', 'series', 1, 3)).found.length, 0, title);
+  }
+  const packTitle = 'Show 1\u042502-03';
+  for (const e of [2, 3]) {
+    const result = await run([pack([sample(packTitle)])], '42', 'series', 1, e);
+    assert.equal(result.found.length, 1, packTitle + ' E' + e);
+    assert.match(result.found[0].name, /Multi-episode/);
+  }
+  assert.equal((await run([pack([sample(packTitle)]), pack([])], '42', 'series', 1, 4)).found.length, 0);
+});
+
+test('Cyrillic \u0445 in pixel dimensions is recognized without fabricating resolution', async () => {
+  const good = await run([pack([sample('Show 1\u044502 1920\u04451080')])], '42', 'series', 1, 2);
+  assert.equal(good.found.length, 1);
+  assert.equal(good.found[0].quality, '1080p');
+  const conflict = await run([pack([sample('Show 1\u044502 1920\u04451080 2160p')])], '42', 'series', 1, 2);
+  assert.equal(conflict.found[0].quality, 'Unknown');
+});
+
+test('counted partial-season release N \u0438\u0437 K only contains episodes 1..N', async () => {
+  for (const title of [
+    'Show 1 \u0441\u0435\u0437\u043e\u043d (3 \u0438\u0437 8)',
+    'Show \u0421\u0435\u0437\u043e\u043d 1 (3 \u0438\u0437 8)',
+    'Show S01 (3 \u0438\u0437 8)',
+    'Show Season 1 (3 of 8)',
+    'Show Season 1 [3 \u0438\u0437 8]'
+  ]) {
+    for (const episode of [1, 2, 3]) {
+      const result = await run([pack([sample(title)])], '42', 'series', 1, episode);
+      assert.equal(result.found.length, 1, title + ' E' + episode);
+      assert.match(result.found[0].name, /Multi-episode/, title);
+    }
+    for (const episode of [4, 8]) {
+      const result = await run([pack([sample(title)]), pack([])], '42', 'series', 1, episode);
+      assert.equal(result.found.length, 0, title + ' should exclude E' + episode);
+    }
+  }
+});
+
+test('counted partial-season releases reject impossible totals and inverted ranges', async () => {
+  for (const title of ['Show 1 \u0441\u0435\u0437\u043e\u043d (8 \u0438\u0437 3)', 'Show 1 \u0441\u0435\u0437\u043e\u043d (4-2 \u0438\u0437 8)', 'Show Season 1 (3 of 2)', 'Show Season 1 (0 of 8)']) {
+    const result = await run([pack([sample(title)]), pack([])], '42', 'series', 1, 2);
+    assert.equal(result.found.length, 0, title);
+  }
+});
+
+test('Russian film aliases match \u0435 and \u0451 without allowing different titles', async () => {
+  const metadata = {data: {title: '\u041b\u0451\u0434', original_title: '\u041b\u0451\u0434', release_date: '2018-02-14'}};
+  const result = await run([metadata,pack([sample('\u041b\u0435\u0434 (2018) 1080p')])], '603','movie',null,null,{tmdbKey:'KEY'});
+  assert.equal(result.found.length, 1);
+  assert.equal(result.found[0].quality, '1080p');
+  const different = await run([metadata,pack([sample('\u041b\u0435\u0434\u044f\u043d\u0430\u044f \u0437\u0435\u043c\u043b\u044f (2018) 1080p')]),pack([])], '603','movie',null,null,{tmdbKey:'KEY'});
+  assert.equal(different.found.length, 0);
+});
+
+// The reported data may use any number of season episodes. Restrict the
+// expected candidate set without trusting a generalized pack fallback.
+test('partial season property matrix rejects every episode above declared count', async () => {
+  for (let total = 2; total <= 12; total++) {
+    for (let count = 1; count <= total; count++) {
+      const title = `Show Season 1 (${count} of ${total})`;
+      for (const episode of [1, count, count + 1, total]) {
+        if (episode > total) continue;
+        const expected = episode <= count;
+        const result = await run([pack([sample(title)]), ...(expected ? [] : [pack([])])], '42', 'series', 1, episode);
+        assert.equal(result.found.length > 0, expected, title + ' E' + episode);
+      }
+    }
+  }
+});
+
+
+test('Cyrillic multiplication sign in movie dimensions is not a film year', async () => {
+  const meta = { data: { title: 'The Matrix', original_title: 'The Matrix', release_date: '1999-03-31' } };
+  const candidate = sample('The Matrix 1920\u04451080 WEB-DL');
+  const result = await run([meta, pack([candidate])], '603', 'movie', null, null, {tmdbKey: 'KEY'});
+  assert.equal(result.found.length, 1);
+  assert.equal(result.found[0].quality, '1080p');
+  assert.equal(result.calls.length, 2);
 });

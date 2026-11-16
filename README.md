@@ -44,7 +44,7 @@ The plugin searches JacRed using movie or series metadata from TMDB, validates B
 
 For TV episodes, it checks the season and episode numbers where they can be identified. Sources covering several episodes or an entire season are labelled **Multi-episode** in the headline, without a warning line. This label deliberately does not claim that every episode of the season is included. Nuvio selects the video file during playback; the plugin does not control that selection.
 
-Source titles may be localized. The parser recognizes common season and episode formats, including localized labels, multi-season ranges, and comma-separated episode lists. Ambiguous packs remain labelled rather than being presented as exact-file matches. Source titles exceeding 500 characters are rejected instead of being truncated into potentially misleading episode matches. Release titles with conflicting dimensions or resolution labels are displayed as Unknown rather than asserting an unsupported quality. The code accepts both 40-character hexadecimal and 32-character base32 BitTorrent v1 info hashes and emits a canonical BTIH magnet for Nuvio. Supported public IPv4, DNS and bracketed IPv6 tracker URLs are retained; malformed, unqualified single-label hostnames, reserved-network and obviously credential-bearing tracker URLs are dropped. DNS names can still resolve to private networks after validation, which requires enforcement by the playback host. IPv6 tracker support does not guarantee that the device or its network has IPv6 connectivity. Torrent v2-only links and direct `.torrent` downloads are not supported.
+Source titles may be localized. The parser recognizes common season and episode formats, including localized labels, multi-season ranges, counted partial seasons, and comma-separated episode lists. Cyrillic `\u0445` in episode and pixel dimensions is accepted like Latin `x`, and Russian title aliases match `\u0435`/`\u0451` when otherwise identical. Ambiguous packs remain labelled rather than being presented as exact-file matches. Source titles exceeding 500 characters are rejected instead of being truncated into potentially misleading episode matches. Release titles with conflicting dimensions or resolution labels are displayed as Unknown rather than asserting an unsupported quality. The code accepts both 40-character hexadecimal and 32-character base32 BitTorrent v1 info hashes and emits a canonical BTIH magnet for Nuvio. Supported public IPv4, DNS and bracketed IPv6 tracker URLs are retained; malformed, unqualified single-label hostnames, reserved-network and obviously credential-bearing tracker URLs are dropped. DNS names can still resolve to private networks after validation, which requires enforcement by the playback host. IPv6 tracker support does not guarantee that the device or its network has IPv6 connectivity. Torrent v2-only links and direct `.torrent` downloads are not supported.
 
 Seeder and peer counts are provided by JacRed and may be incomplete or outdated. A minimum-seeder filter excludes releases with unknown counts rather than treating them as verified. A magnet is a lead, not a promise that a stream will play.
 
@@ -53,7 +53,7 @@ Seeder and peer counts are provided by JacRed and may be incomplete or outdated.
 Season-and-episode labels in release titles are hints, not a file index.
 An explicit episode number that cannot be parsed safely is rejected rather
 than treated as an entire season. Named intervals such as
-`Season 1: Episodes 1-3` and postfix labels such as `Season 1: 2-4 episodes` are matched only to those episodes,
+`Season 1: Episodes 1-3`, `Season 1: 2-4 episodes`, and counted bundles such as `1 season (3 of 8)` are matched only to the episodes stated,
 not every episode in the season. A matching multi-episode result has the concise `Multi-episode` label.
 A partial-season bundle does not claim to be a full season. Nuvio selects
 the appropriate file using the episode context when supported; the plugin
@@ -155,11 +155,11 @@ Distributed under the [MIT License](LICENSE). Only access and share content that
 
 These corrections change search result filtering and card text only; they do not alter Nuvio EngineFS or the torrent playback implementation.
 
-## Update troubleshooting (0.0.17)
+## Update troubleshooting (0.0.18)
 
 The circle-arrow on a stream list reloads the **search results**, not the installed JavaScript.
 In **Nuvio Settings > Plugins**, select the JacRed Direct **repository** and choose
-**Refresh repository**; confirm that the installed provider shows **Version 0.0.17**.
+**Refresh repository**; confirm that the installed provider shows **Version 0.0.18**.
 Then close and reopen Nuvio and refresh the stream list.
 
 Nuvio caches provider code per profile. When downloading updated JavaScript fails,
@@ -182,3 +182,18 @@ TMDB `first_air_date` is the series debut year, not necessarily the release year
 ## v0.0.17: series debut-year display fix
 
 A series release heading with a bracketed catalogue year no longer re-adds that year as the episode release date. JacRed card-mode year filtering is unchanged; movie year formatting and torrent resolution are unchanged.
+
+## v0.0.18: independent search-matching audit
+
+The episode parser no longer mistakes a video-quality suffix such as
+`S01E02-720p` for an impossible episode range, or `Season 1: 2-720p episodes`
+for a release containing 720 episodes. It recognizes Cyrillic `\u0445` in
+`1\u044502` episode notation and `1920\u04451080` dimensions. The same dimension
+separator is handled consistently during title and year validation.
+
+A counted partial-season title such as `1 season (3 of 8)` matches episodes
+1 through 3 and does not match episodes 4 through 8. Matching Russian
+release names tolerates `\u0435`/`\u0451` spelling variants without accepting unrelated
+titles. These are provider-side discovery corrections only; the host's
+EngineFS torrent creation timeout, actual peer availability, and exact file
+selection require separate on-device testing.
