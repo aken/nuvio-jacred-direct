@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.16
+/* JacRed Direct for Nuvio - 0.0.17
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -251,7 +251,7 @@
       label = label.slice(0, 93).replace(/[\uD800-\uDBFF]$/, '').trimEnd() + '...';
     }
     var year = kind === 'movie' && metadata ? metadata.year : 0;
-    if ((!Number.isInteger(year) || year < 1900 || year > 2100) && bracket) {
+    if (kind === 'movie' && (!Number.isInteger(year) || year < 1900 || year > 2100) && bracket) {
       var found = /\[(19|20)\d{2}/.exec(bracket[0]);
       year = found ? Number(found[0].slice(1)) : 0;
     }

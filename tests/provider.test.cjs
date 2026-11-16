@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.16');
+  assert.equal(manifest.version, '0.0.17');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.16$/);
+  assert.match(pkg.version,/^0\.0\.17$/);
 });
 
 
@@ -1167,4 +1167,13 @@ test('movie release year remains visible without changing its JacRed search filt
   assert.equal(result.found.length,1);
   assert.equal(query(result.calls[1]).searchParams.get('year'),'1999');
   assert.match(result.found[0].title,/\(1999\)/);
+});
+
+test('series heading in bracketed debut year must not re-add debut year after shortening', async () => {
+  const meta = {data: {name:'\u0427\u0435\u0440\u043d\u043e\u0435 \u0437\u0435\u0440\u043a\u0430\u043b\u043e',original_name:'Black Mirror',first_air_date:'2011-12-04'}};
+  const row = sample('\u0427\u0435\u0440\u043d\u043e\u0435 \u0437\u0435\u0440\u043a\u0430\u043b\u043e / Black Mirror / S07E02 [2011, UK, drama] 1080p', HASH_A, 14);
+  const result = await run([meta, pack([row])], '42009', 'series', 7, 2, {tmdbKey:'KEY'});
+  assert.equal(result.found.length,1);
+  assert.equal(query(result.calls[1]).searchParams.get('year'),'2011');
+  assert.ok(!result.found[0].title.includes('(2011)'), 'series debut year must not be injected into release card');
 });
