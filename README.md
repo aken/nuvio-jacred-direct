@@ -155,11 +155,11 @@ Distributed under the [MIT License](LICENSE). Only access and share content that
 
 These corrections change search result filtering and card text only; they do not alter Nuvio EngineFS or the torrent playback implementation.
 
-## Update troubleshooting (0.0.15)
+## Update troubleshooting (0.0.16)
 
 The circle-arrow on a stream list reloads the **search results**, not the installed JavaScript.
 In **Nuvio Settings > Plugins**, select the JacRed Direct **repository** and choose
-**Refresh repository**; confirm that the installed provider shows **Version 0.0.15**.
+**Refresh repository**; confirm that the installed provider shows **Version 0.0.16**.
 Then close and reopen Nuvio and refresh the stream list.
 
 Nuvio caches provider code per profile. When downloading updated JavaScript fails,
@@ -174,3 +174,7 @@ included for episodes 1-3 and excluded for episodes 4-8. Sources that do not
 state a resolution use a known release format (for example, `WEBRip`). When neither
 resolution nor a release format is known, `Unknown` is retained. No resolution
 is inferred from file size or seed counts.
+
+## Series release-year display correction (0.0.16)
+
+TMDB `first_air_date` is the series debut year, not necessarily the release year of an individual season. For television results, the source card no longer appends the series debut year to an episode or season release. An explicit year in the torrent title remains visible. Movie cards continue to show the TMDB release year as before. The JacRed card-search `year` parameter is intentionally preserved: JacRed applies a series-aware year gate (`release year >= first-air year - 1`) and can find later seasons without a redundant fallback request. This change affects only card presentation and does not change torrent search, hash, magnet, or file selection.

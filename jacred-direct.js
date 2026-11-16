@@ -1,4 +1,4 @@
-/* JacRed Direct for Nuvio - 0.0.15
+/* JacRed Direct for Nuvio - 0.0.16
  * Runs inside Nuvio's sandboxed QuickJS plugin runtime.
  * Uses JacRed for source discovery and Nuvio's built-in P2P resolver for playback.
  * No separate bridge, personal torrent server, or debrid account is needed.
@@ -236,7 +236,7 @@
     });
     return result;
   }
-  function shortReleaseLabel(title, metadata) {
+  function shortReleaseLabel(title, metadata, kind) {
     // A common JacRed heading contains a verbose [year, countries, genres,
     // technical details] block. Those details are rendered separately.
     // Preserve all original source data for validation before calling this.
@@ -250,7 +250,7 @@
       // Avoid cutting inside a surrogate pair, even with a malformed source.
       label = label.slice(0, 93).replace(/[\uD800-\uDBFF]$/, '').trimEnd() + '...';
     }
-    var year = metadata && metadata.year;
+    var year = kind === 'movie' && metadata ? metadata.year : 0;
     if ((!Number.isInteger(year) || year < 1900 || year > 2100) && bracket) {
       var found = /\[(19|20)\d{2}/.exec(bracket[0]);
       year = found ? Number(found[0].slice(1)) : 0;
@@ -658,7 +658,7 @@
     // JacRed reports Peers, not a guaranteed leecher-only count.
     if (peers >= 0) technical.push(peers + (peers === 1 ? ' peer' : ' peers'));
     var audio = sourceAudioDetails(row);
-    var display = shortReleaseLabel(title, metadata) + '\n' + technical.filter(Boolean).join(' \u00b7 ');
+    var display = shortReleaseLabel(title, metadata, kind) + '\n' + technical.filter(Boolean).join(' \u00b7 ');
     if (audio) display += '\n' + audio;
     var trackers = magnetTrackers(magnet);
     return {

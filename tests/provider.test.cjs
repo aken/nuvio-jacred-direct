@@ -49,7 +49,7 @@ function query(call) { return new URL(call.url); }
 test('native manifest matches the expected Nuvio shape and paths', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
   assert.equal(manifest.name, 'JacRed Direct');
-  assert.equal(manifest.version, '0.0.15');
+  assert.equal(manifest.version, '0.0.16');
   assert.equal(manifest.scrapers.length, 1);
   assert.equal(manifest.scrapers[0].filename, 'jacred-direct.js');
   assert.equal(manifest.scrapers[0].version, manifest.version);
@@ -604,7 +604,7 @@ test('plugin metadata and package version remain synchronized', () => {
   const manifest=JSON.parse(fs.readFileSync(path.join(__dirname,'..','manifest.json'),'utf8'));
   assert.equal(manifest.version,pkg.version);
   assert.equal(manifest.scrapers[0].version,pkg.version);
-  assert.match(pkg.version,/^0\.0\.15$/);
+  assert.match(pkg.version,/^0\.0\.16$/);
 });
 
 
@@ -1138,4 +1138,33 @@ test('resolution-unknown source uses a documented format label without claiming 
   assert.equal(x.found[0].quality,'Unknown');
   const y=await run([pack([sample('Example S01E02 WEBRip 1080p')])],'312','series',1,2);
   assert.equal(y.found[0].quality,'1080p');
+});
+
+
+test('Black Mirror S7E2 card does not confuse series debut with episode release year', async () => {
+  const meta = {data: {
+    name: '\u0427\u0435\u0440\u043d\u043e\u0435 \u0437\u0435\u0440\u043a\u0430\u043b\u043e',
+    original_name: 'Black Mirror', first_air_date: '2011-12-04'
+  }};
+  const episode = sample('\u0427\u0435\u0440\u043d\u043e\u0435 \u0437\u0435\u0440\u043a\u0430\u043b\u043e / Black Mirror / 7 \u0441\u0435\u0437\u043e\u043d 2 \u0441\u0435\u0440\u0438\u044f', HASH_A, 1, {Tracker:'lostfilm',Peers:0});
+  const bundle = sample('\u0427\u0435\u0440\u043d\u043e\u0435 \u0437\u0435\u0440\u043a\u0430\u043b\u043e (7 \u0441\u0435\u0437\u043e\u043d: 1-6 \u0441\u0435\u0440\u0438\u0438 \u0438\u0437 6) / Black Mirror / 2025 / HEVC / WEBRip (1080p)', HASH_B, 812);
+  const result = await run([meta,pack([episode,bundle])], '42009','series',7,2,{tmdbKey:'KEY'});
+  assert.equal(result.found.length, 2);
+  assert.equal(result.calls.length, 2, 'do not introduce an extra API request');
+  assert.equal(query(result.calls[1]).searchParams.get('year'),'2011',
+    'JacRed year gate is series-aware and must remain intact');
+  assert.match(result.found[0].title,/7 \u0441\u0435\u0437\u043e\u043d 2 \u0441\u0435\u0440\u0438\u044f/);
+  assert.doesNotMatch(result.found[0].title,/\(2011\)/);
+  assert.match(result.found[1].title,/2025/);
+  assert.doesNotMatch(result.found[1].title,/\(2011\)/);
+  assert.match(result.found[1].name,/Multi-episode/);
+  assert.match(result.found[1].url,/^magnet:\?xt=urn:btih:/);
+});
+
+test('movie release year remains visible without changing its JacRed search filter', async () => {
+  const movie = {data:{title:'\u041c\u0430\u0442\u0440\u0438\u0446\u0430',original_title:'The Matrix',release_date:'1999-03-31'}};
+  const result = await run([movie,pack([sample('\u041c\u0430\u0442\u0440\u0438\u0446\u0430 / The Matrix 1080p')])],'603','movie',null,null,{tmdbKey:'KEY'});
+  assert.equal(result.found.length,1);
+  assert.equal(query(result.calls[1]).searchParams.get('year'),'1999');
+  assert.match(result.found[0].title,/\(1999\)/);
 });
